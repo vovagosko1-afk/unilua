@@ -695,8 +695,7 @@ Register({
         self._conn = Services.RunService.Heartbeat:Connect(function()
             if os.clock() - self._last < self.settings.Delay then return end
             pcall(function()
-                local chat = game:GetService("ReplicatedStorage")
-                local events = chat:FindFirstChild("DefaultChatSystemChatEvents")
+                local events = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
                 if events then
                     local say = events:FindFirstChild("SayMessageRequest")
                     if say then say:FireServer(self.settings.Message, "All") end
