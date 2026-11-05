@@ -1,26 +1,24 @@
 --[[
-    Aero v2 - mobile executor UI for Delta (Android)
-
-    Tabs: Move / Aim / Visual / Players
-    Features: speed + jump, infinite jump, noclip, fly pad, aimbot with FOV
-              circle, ESP (boxes, names, distance, hp), fullbright, safe
-              teleport to player.
+    Aero v2.1 - mobile executor UI for Delta (Android)
+    Tabs: MOVE / AIM / VIS / PLAY
 ]]
 
-local OldVersion = getgenv and getgenv().__Aero
-if OldVersion and OldVersion.destroy then
-    pcall(OldVersion.destroy)
+if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
+    pcall(getgenv().__Aero.destroy)
 end
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Lighting         = game:GetService("Lighting")
+local TeleportService  = game:GetService("TeleportService")
+local HttpService      = game:GetService("HttpService")
+local Stats            = game:GetService("Stats")
+local GuiService       = game:GetService("GuiService")
 
 local LP = Players.LocalPlayer
 if not LP then return end
 
--- Drawing library (Delta has it). Used by ESP + FOV circle.
 local DrawingLib = nil
 pcall(function()
     if typeof(Drawing) == "table" and Drawing.new then
@@ -29,20 +27,12 @@ pcall(function()
 end)
 
 local state = {
-    speed      = 16,
-    jump       = 50,
-    lockStats  = false,
-    infJump    = false,
-    noclip     = false,
-    fly        = false,
-    flySpeed   = 60,
-    aimbot     = false,
-    fov        = 150,
-    smooth     = 0.35,
-    teamCheck  = false,
-    predict    = true,
-    esp        = false,
-    fullbright = false,
+    speed = 16, jump = 50, lockStats = false, infJump = false,
+    noclip = false, fly = false, flySpeed = 60, clickTp = false,
+    aimbot = false, fov = 150, smooth = 0.35, teamCheck = false,
+    predict = true, triggerbot = false, triggerFov = 45,
+    esp = false, espHealth = true, fullbright = false,
+    stats = false, fpsBoost = false,
 }
 
 local destroyed = false
@@ -60,6 +50,12 @@ local function getHRP()
     return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart
 end
 
+local function clamp(v, a, b)
+    if v < a then return a end
+    if v > b then return b end
+    return v
+end
+
 -- ============================================================
 --  movement
 -- ============================================================
@@ -71,7 +67,6 @@ end
 local function applyJump()
     local h = getHum()
     if not h then return end
-    -- games that run on JumpHeight ignore JumpPower until this is flipped
     if h.UseJumpPower ~= true then
         pcall(function() h.UseJumpPower = true end)
     end
@@ -84,7 +79,7 @@ local function applyStats()
 end
 
 -- ============================================================
---  noclip (remembers the original CanCollide)
+--  noclip
 -- ============================================================
 local noclipSaved = {}
 
@@ -121,12 +116,10 @@ end
 local function ensureFlyBody()
     local root = getHRP()
     if not root then return end
-
     if flyBV and flyBV.Parent ~= root then
         pcall(function() flyBV:Destroy() end)
         flyBV = nil
     end
-
     if not flyBV then
         local bv = Instance.new("BodyVelocity")
         bv.Name = "AeroFly"
@@ -135,7 +128,6 @@ local function ensureFlyBody()
         bv.Parent = root
         flyBV = bv
     end
-
     local h = getHum()
     if h and h.Health > 0 then h.PlatformStand = true end
 end
@@ -157,7 +149,6 @@ end
 
 local function flyStep()
     if not state.fly then return end
-
     local h = getHum()
     if not h or h.Health <= 0 then return end
     if not getHRP() then return end
@@ -184,7 +175,7 @@ local function flyStep()
 end
 
 -- ============================================================
---  fullbright
+--  lighting / fullbright
 -- ============================================================
 local savedLighting = nil
 
@@ -193,12 +184,12 @@ local function setFullbright(on)
     if on then
         if not savedLighting then
             savedLighting = {
-                Brightness     = Lighting.Brightness,
-                Ambient        = Lighting.Ambient,
+                Brightness = Lighting.Brightness,
+                Ambient = Lighting.Ambient,
                 OutdoorAmbient = Lighting.OutdoorAmbient,
-                ClockTime      = Lighting.ClockTime,
-                FogEnd         = Lighting.FogEnd,
-                GlobalShadows  = Lighting.GlobalShadows,
+                ClockTime = Lighting.ClockTime,
+                FogEnd = Lighting.FogEnd,
+                GlobalShadows = Lighting.GlobalShadows,
             }
         end
         Lighting.Brightness = 3
@@ -216,42 +207,67 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  teleport (safe: offset, floor snap, velocity pin)
+--  fps booster
 -- ============================================================
-local function safeTeleport(plr)
-    local myChar, myRoot, myHum = getChar(), getHRP(), getHum()
-    if not myChar or not myRoot or not myHum or myHum.Health <= 0 then
-        return false, "you are dead"
+local boostState = nil
+
+local function setFpsBoost(on)
+    state.fpsBoost = on
+    if on then
+        if boostState then return end
+        boostState = {
+            effects = {},
+            lighting = {
+                GlobalShadows = Lighting.GlobalShadows,
+                ShadowSoftness = Lighting.ShadowSoftness,
+                EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
+                EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
+            },
+        }
+
+        pcall(function() settings().Rendering.QualityLevel = 1 end)
+        Lighting.GlobalShadows = false
+        Lighting.ShadowSoftness = 0
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+
+        local ok, list = pcall(function() return workspace:GetDescendants() end)
+        if ok then
+            for _, inst in ipairs(list) do
+                if inst:IsA("ParticleEmitter") or inst:IsA("Fire") or inst:IsA("Smoke")
+                    or inst:IsA("Sparkles") or inst:IsA("Beam") or inst:IsA("Trail") then
+                    if inst.Enabled then
+                        boostState.effects[inst] = true
+                        inst.Enabled = false
+                    end
+                end
+            end
+        end
+    elseif boostState then
+        for inst in pairs(boostState.effects) do
+            if inst and inst.Parent then
+                pcall(function() inst.Enabled = true end)
+            end
+        end
+        for k, v in pairs(boostState.lighting) do
+            pcall(function() Lighting[k] = v end)
+        end
+        pcall(function() settings().Rendering.QualityLevel = 3 end)
+        boostState = nil
     end
+end
 
-    local tChar = plr.Character
-    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
-    local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
-    if not tRoot or not tHum or tHum.Health <= 0 then
-        return false, "target is dead"
-    end
-
-    -- land slightly behind the target instead of inside their body:
-    -- overlapping parts is what launches you into the void / kills you
-    local dest = (tRoot.CFrame * CFrame.new(0, 0, 3.5)).Position
-
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { myChar, tChar }
-    params.IgnoreWater = false
-
-    local hit = workspace:Raycast(dest + Vector3.new(0, 8, 0), Vector3.new(0, -40, 0), params)
-    if hit then
-        dest = hit.Position + Vector3.new(0, 3, 0)
-    else
-        dest = dest + Vector3.new(0, 1, 0)
-    end
+-- ============================================================
+--  teleport
+-- ============================================================
+local function teleportToPosition(pos)
+    local myChar, myRoot = getChar(), getHRP()
+    if not myChar or not myRoot then return false end
 
     myRoot.AssemblyLinearVelocity = Vector3.zero
     myRoot.AssemblyAngularVelocity = Vector3.zero
-    myChar:PivotTo(CFrame.new(dest))
+    myChar:PivotTo(CFrame.new(pos))
 
-    -- pin velocity right after the move so physics does not yeet us
     task.spawn(function()
         for _ = 1, 8 do
             if destroyed then return end
@@ -266,12 +282,92 @@ local function safeTeleport(plr)
     return true
 end
 
+local function safeTeleport(plr)
+    local myChar, myRoot, myHum = getChar(), getHRP(), getHum()
+    if not myChar or not myRoot or not myHum or myHum.Health <= 0 then
+        return false, "you are dead"
+    end
+
+    local tChar = plr.Character
+    local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+    if not tRoot or not tHum or tHum.Health <= 0 then
+        return false, "target is dead"
+    end
+
+    local dest = (tRoot.CFrame * CFrame.new(0, 0, 3.5)).Position
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { myChar, tChar }
+    params.IgnoreWater = false
+
+    local hit = workspace:Raycast(dest + Vector3.new(0, 8, 0), Vector3.new(0, -40, 0), params)
+    if hit then
+        dest = hit.Position + Vector3.new(0, 3, 0)
+    else
+        dest = dest + Vector3.new(0, 1, 0)
+    end
+
+    teleportToPosition(dest)
+    return true
+end
+
 -- ============================================================
---  aimbot
+--  server hop / rejoin
 -- ============================================================
-local function pickTarget()
+local function rejoin()
+    if game.JobId == "" then return false, "no job id" end
+    local ok = pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+    end)
+    if ok then return true end
+    return false, "teleport failed"
+end
+
+local function serverHop()
+    local placeId = game.PlaceId
+    local url = "https://games.roproxy.com/v1/games/" .. placeId ..
+        "/servers/Public?sortOrder=Asc&limit=100"
+
+    local ok, body = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+    if not ok or type(body) ~= "string" then return false, "http failed" end
+
+    local decoded, data = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+    if not decoded or type(data) ~= "table" or type(data.data) ~= "table" then
+        return false, "bad response"
+    end
+
+    local pool = {}
+    for _, srv in ipairs(data.data) do
+        if type(srv) == "table" and srv.id and srv.id ~= game.JobId then
+            if (tonumber(srv.playing) or 0) < (tonumber(srv.maxPlayers) or 0) then
+                table.insert(pool, srv.id)
+            end
+        end
+    end
+
+    if #pool == 0 then return false, "no free servers" end
+
+    local target = pool[math.random(1, #pool)]
+    local ok2 = pcall(function()
+        TeleportService:TeleportToPlaceInstance(placeId, target, LP)
+    end)
+    if ok2 then return true end
+    return false, "teleport failed"
+end
+
+-- ============================================================
+--  aim / trigger
+-- ============================================================
+local function pickTarget(fov)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
+    fov = fov or state.fov
 
     local center = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
     local best, bestDist = nil, math.huge
@@ -295,7 +391,7 @@ local function pickTarget()
                 local pos, onScreen = cam:WorldToViewportPoint(aimAt)
                 if onScreen then
                     local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-                    if d <= state.fov and d < bestDist then
+                    if d <= fov and d < bestDist then
                         best, bestDist = aimAt, d
                     end
                 end
@@ -316,21 +412,53 @@ local function aimStep(dt)
 
     local goal = CFrame.lookAt(cam.CFrame.Position, target)
     local speed = 26 - 24 * state.smooth
-    local alpha = math.clamp(dt * speed, 0, 1)
-    cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+    cam.CFrame = cam.CFrame:Lerp(goal, clamp(dt * speed, 0, 1))
+end
+
+local lastTrigger = 0
+
+local function fireWeapon()
+    if type(mouse1click) == "function" then
+        pcall(mouse1click)
+        return true
+    end
+    if type(mouse1press) == "function" and type(mouse1release) == "function" then
+        pcall(mouse1press)
+        pcall(mouse1release)
+        return true
+    end
+    local c = getChar()
+    local tool = c and c:FindFirstChildOfClass("Tool")
+    if tool then
+        local ok = pcall(function() tool:Activate() end)
+        if ok then return true end
+    end
+    return false
+end
+
+local function triggerStep()
+    if not state.triggerbot then return end
+    local now = os.clock()
+    if now - lastTrigger < 0.1 then return end
+    if pickTarget(state.triggerFov) then
+        lastTrigger = now
+        fireWeapon()
+    end
 end
 
 -- ============================================================
 --  ESP
 -- ============================================================
-local espItems = {}   -- [player] = { box, name, info }
-local espFallback = {} -- [player] = Highlight, only if Drawing is missing
+local espItems = {}
+local espFallback = {}
 
 local function hideItem(item)
     if not item then return end
     item.box.Visible = false
     item.name.Visible = false
     item.info.Visible = false
+    item.hpBg.Visible = false
+    item.hp.Visible = false
 end
 
 local function newItem()
@@ -354,6 +482,16 @@ local function newItem()
     item.info.Outline = true
     item.info.Visible = false
 
+    item.hpBg = DrawingLib.new("Square")
+    item.hpBg.Filled = true
+    item.hpBg.Color = Color3.fromRGB(12, 12, 16)
+    item.hpBg.Transparency = 0.35
+    item.hpBg.Visible = false
+
+    item.hp = DrawingLib.new("Square")
+    item.hp.Filled = true
+    item.hp.Visible = false
+
     return item
 end
 
@@ -362,6 +500,8 @@ local function removeItem(item)
     pcall(function() item.box:Remove() end)
     pcall(function() item.name:Remove() end)
     pcall(function() item.info:Remove() end)
+    pcall(function() item.hpBg:Remove() end)
+    pcall(function() item.hp:Remove() end)
 end
 
 local function clearESP()
@@ -379,13 +519,10 @@ local function espColor(plr, hum)
     if hum and hum.Health <= 0 then
         return Color3.fromRGB(120, 120, 130)
     end
-    if plr.Team then
-        return plr.Team.TeamColor.Color
-    end
+    if plr.Team then return plr.Team.TeamColor.Color end
     return Color3.fromRGB(124, 92, 255)
 end
 
--- fallback when the executor has no Drawing library
 local function espFallbackStep()
     if not state.esp then
         for plr, hl in pairs(espFallback) do
@@ -462,9 +599,8 @@ local function espStep()
 
                 if top.Z > 0 and bottom.Z > 0 then
                     local h = math.abs(bottom.Y - top.Y)
-                    local w = h * 0.55
                     if h < 6 then h = 6 end
-
+                    local w = h * 0.55
                     local color = espColor(plr, hum)
 
                     item.box.Color = color
@@ -482,6 +618,23 @@ local function espStep()
                     item.info.Text = string.format("%d m   %d hp", dist, math.floor(hum.Health))
                     item.info.Position = Vector2.new(top.X, top.Y + h + 2)
                     item.info.Visible = true
+
+                    if state.espHealth then
+                        local maxHp = math.max(hum.MaxHealth, 1)
+                        local frac = clamp(hum.Health / maxHp, 0, 1)
+                        local barX = top.X - w * 0.5 - 7
+                        item.hpBg.Position = Vector2.new(barX, top.Y)
+                        item.hpBg.Size = Vector2.new(4, h)
+                        item.hpBg.Visible = true
+                        item.hp.Position = Vector2.new(barX, top.Y + h * (1 - frac))
+                        item.hp.Size = Vector2.new(4, h * frac)
+                        item.hp.Color = Color3.fromRGB(235, 70, 70):Lerp(
+                            Color3.fromRGB(80, 235, 130), frac)
+                        item.hp.Visible = true
+                    else
+                        item.hpBg.Visible = false
+                        item.hp.Visible = false
+                    end
                 else
                     hideItem(item)
                 end
@@ -495,18 +648,17 @@ local function espStep()
 end
 
 -- ============================================================
---  UI tema
+--  UI
 -- ============================================================
 local Theme = {
-    bg       = Color3.fromRGB(13, 13, 17),
-    card     = Color3.fromRGB(23, 23, 30),
-    cardHi   = Color3.fromRGB(29, 29, 38),
-    line     = Color3.fromRGB(42, 42, 55),
-    text     = Color3.fromRGB(234, 234, 244),
-    dim      = Color3.fromRGB(138, 138, 160),
-    accent   = Color3.fromRGB(124, 92, 255),
-    accent2  = Color3.fromRGB(86, 200, 255),
-    good     = Color3.fromRGB(68, 200, 140),
+    bg = Color3.fromRGB(13, 13, 17),
+    card = Color3.fromRGB(23, 23, 30),
+    cardHi = Color3.fromRGB(29, 29, 38),
+    line = Color3.fromRGB(42, 42, 55),
+    text = Color3.fromRGB(234, 234, 244),
+    dim = Color3.fromRGB(138, 138, 160),
+    accent = Color3.fromRGB(124, 92, 255),
+    accent2 = Color3.fromRGB(86, 200, 255),
 }
 
 local function corner(parent, r)
@@ -524,8 +676,6 @@ local function resolveGuiParent()
     return LP:WaitForChild("PlayerGui")
 end
 
--- forward declaration: the header close button runs before the
--- real implementation is defined at the bottom of the file
 local destroy
 
 local gui = Instance.new("ScreenGui")
@@ -539,11 +689,11 @@ gui.Parent = resolveGuiParent()
 local vp = gui.AbsoluteSize
 if vp.X < 10 then vp = Vector2.new(400, 700) end
 
-local PANEL_W = math.clamp(math.floor(vp.X * 0.52), 258, 340)
-local PANEL_H = math.clamp(math.floor(vp.Y * 0.62), 320, 480)
+local PANEL_W = clamp(math.floor(vp.X * 0.52), 258, 340)
+local PANEL_H = clamp(math.floor(vp.Y * 0.62), 320, 480)
+local TAB_BAR_H = 46
 
 local main = Instance.new("Frame")
-main.Name = "Panel"
 main.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
 main.Position = UDim2.new(0, 12, 0.5, -math.floor(PANEL_H * 0.5))
 main.BackgroundColor3 = Theme.bg
@@ -559,7 +709,6 @@ mainStroke.Thickness = 1
 mainStroke.Transparency = 0.2
 mainStroke.Parent = main
 
--- header ------------------------------------------------------
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 40)
 header.BackgroundTransparency = 1
@@ -574,7 +723,7 @@ dot.Parent = header
 corner(dot, 4)
 
 local brand = Instance.new("TextLabel")
-brand.Size = UDim2.new(1, -120, 1, 0)
+brand.Size = UDim2.new(1, -130, 1, 0)
 brand.Position = UDim2.fromOffset(28, 0)
 brand.BackgroundTransparency = 1
 brand.Font = Enum.Font.GothamBold
@@ -585,8 +734,8 @@ brand.Text = "AERO"
 brand.Parent = header
 
 local brandTag = Instance.new("TextLabel")
-brandTag.Size = UDim2.new(1, -120, 1, 0)
-brandTag.Position = UDim2.fromOffset(76, 0)
+brandTag.Size = UDim2.new(1, -130, 1, 0)
+brandTag.Position = UDim2.fromOffset(78, 0)
 brandTag.BackgroundTransparency = 1
 brandTag.Font = Enum.Font.GothamMedium
 brandTag.TextSize = 10
@@ -614,20 +763,14 @@ local function headerButton(text, x, onClick)
     return b
 end
 
-local minimizeBtn = headerButton("_", -70, function()
+headerButton("_", -70, function()
     main.Visible = false
-    reopen.Visible = true
 end)
 
-local closeBtn = headerButton("x", -36, function()
-    if destroyed then return end
-    if destroy then
-        destroy()
-    end
+headerButton("x", -36, function()
+    if destroy then destroy() end
 end)
 
--- tab bar -----------------------------------------------------
-local TAB_BAR_H = 46
 local tabBar = Instance.new("Frame")
 tabBar.Size = UDim2.new(1, 0, 0, TAB_BAR_H)
 tabBar.Position = UDim2.new(0, 0, 1, -TAB_BAR_H)
@@ -649,6 +792,8 @@ content.Parent = main
 
 local tabs = {}
 local tabButtons = {}
+local activeTab = nil
+local refreshPlayerList
 
 local function newTab(id)
     local sf = Instance.new("ScrollingFrame")
@@ -678,9 +823,6 @@ local function newTab(id)
     tabs[id] = sf
     return sf
 end
-
-local activeTab = nil
-local refreshPlayerList
 
 local function showTab(id)
     for name, frame in pairs(tabs) do
@@ -724,19 +866,18 @@ for i, def in ipairs(tabDefs) do
     tabButtons[def[1]] = b
 end
 
--- reopen pill -------------------------------------------------
+-- floating toggle
 local reopen = Instance.new("TextButton")
-reopen.Size = UDim2.fromOffset(54, 54)
-reopen.Position = UDim2.new(0, 12, 0, 90)
+reopen.Size = UDim2.fromOffset(50, 50)
+reopen.Position = UDim2.new(0, 10, 0, 96)
 reopen.BackgroundColor3 = Theme.bg
 reopen.BorderSizePixel = 0
 reopen.Font = Enum.Font.GothamBold
-reopen.TextSize = 12
+reopen.TextSize = 13
 reopen.TextColor3 = Theme.accent2
-reopen.Text = "AERO"
-reopen.Visible = false
+reopen.Text = "A"
 reopen.Parent = gui
-corner(reopen, 27)
+corner(reopen, 25)
 
 local reopenStroke = Instance.new("UIStroke")
 reopenStroke.Color = Theme.accent
@@ -744,47 +885,80 @@ reopenStroke.Thickness = 1
 reopenStroke.Transparency = 0.3
 reopenStroke.Parent = reopen
 
-reopen.MouseButton1Click:Connect(function()
-    main.Visible = true
-    reopen.Visible = false
-end)
-
--- drag --------------------------------------------------------
+-- ============================================================
+--  drag
+-- ============================================================
 local dragging, dragStart, dragOrigin = false, nil, nil
+local btnDragging, btnStart, btnOrigin, btnMoved = false, nil, nil, 0
+
+local function isPrimaryInput(input)
+    return input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+end
 
 header.InputBegan:Connect(function(input)
-    if destroyed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        -- normalise to pure offset so the first drag does not jump
-        local ap = main.AbsolutePosition
-        local gp = gui.AbsolutePosition
-        main.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
-        dragStart = input.Position
-        dragOrigin = main.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
+    if destroyed or not isPrimaryInput(input) then return end
+    dragging = true
+    local ap = main.AbsolutePosition
+    local gp = gui.AbsolutePosition
+    main.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
+    dragStart = input.Position
+    dragOrigin = main.Position
+    input.Changed:Connect(function()
+        if input.UserInputState == Enum.UserInputState.End then
+            dragging = false
+        end
+    end)
+end)
+
+reopen.InputBegan:Connect(function(input)
+    if destroyed or not isPrimaryInput(input) then return end
+    btnDragging = true
+    btnMoved = 0
+    btnStart = input.Position
+    local ap = reopen.AbsolutePosition
+    local gp = gui.AbsolutePosition
+    reopen.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
+    btnOrigin = reopen.Position
+    input.Changed:Connect(function()
+        if input.UserInputState == Enum.UserInputState.End then
+            btnDragging = false
+        end
+    end)
+end)
+
+reopen.InputEnded:Connect(function(input)
+    if destroyed or not isPrimaryInput(input) then return end
+    btnDragging = false
+    if btnMoved < 8 then
+        main.Visible = not main.Visible
     end
 end)
 
 local dragConn = UserInputService.InputChanged:Connect(function(input)
-    if destroyed or not dragging then return end
+    if destroyed then return end
     if input.UserInputType ~= Enum.UserInputType.MouseMovement
         and input.UserInputType ~= Enum.UserInputType.Touch then
         return
     end
 
-    local delta = input.Position - dragStart
-    local nx = dragOrigin.X.Offset + delta.X
-    local ny = dragOrigin.Y.Offset + delta.Y
     local sw = gui.AbsoluteSize.X
     local sh = gui.AbsoluteSize.Y
-    nx = math.clamp(nx, -(PANEL_W - 80), sw - 80)
-    ny = math.clamp(ny, -(PANEL_H - 90), sh - 90)
+
+    if btnDragging and btnStart then
+        local d = input.Position - btnStart
+        btnMoved = math.max(btnMoved, math.abs(d.X) + math.abs(d.Y))
+        local nx = clamp(btnOrigin.X.Offset + d.X, 0, sw - 50)
+        local ny = clamp(btnOrigin.Y.Offset + d.Y, 0, sh - 50)
+        reopen.Position = UDim2.new(0, nx, 0, ny)
+        return
+    end
+
+    if not dragging then return end
+
+    local delta = input.Position - dragStart
+    local nx = clamp(dragOrigin.X.Offset + delta.X, -(PANEL_W - 80), sw - 80)
+    local ny = clamp(dragOrigin.Y.Offset + delta.Y, -(PANEL_H - 90), sh - 90)
     main.Position = UDim2.new(0, nx, 0, ny)
 end)
 
@@ -816,28 +990,19 @@ local function card(parent, height)
     return row
 end
 
-local function label(parent, text, x, y, w, h, size, color, align)
-    local l = Instance.new("TextLabel")
-    l.Position = UDim2.fromOffset(x, y)
-    l.Size = UDim2.new(1, -(x + 44), 0, h)
-    if w then l.Size = UDim2.new(1, w, 0, h) end
-    l.BackgroundTransparency = 1
-    l.Font = Enum.Font.GothamMedium
-    l.TextSize = size or 12
-    l.TextColor3 = color or Theme.text
-    l.TextXAlignment = align or Enum.TextXAlignment.Left
-    l.Text = text
-    l.Parent = parent
-    return l
-end
-
 local function makeSwitch(parent, text, get, set)
     local row = card(parent, 42)
 
-    label(row, text, 12, 0, -60, 42, 13, Theme.text)
-    local lbl = row:FindFirstChildOfClass("TextLabel")
+    local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(1, -70, 1, 0)
-    lbl.TextYAlignment = Enum.TextYAlignment.Center
+    lbl.Position = UDim2.fromOffset(12, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 13
+    lbl.TextColor3 = Theme.text
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = text
+    lbl.Parent = row
 
     local pill = Instance.new("Frame")
     pill.Size = UDim2.fromOffset(38, 21)
@@ -884,12 +1049,20 @@ local activeSlider = nil
 local function makeSlider(parent, text, minv, maxv, stepv, get, set, decimals)
     local row = card(parent, 46)
 
-    local nameLbl = label(row, text, 12, 7, -70, 16, 12, Theme.dim)
+    local nameLbl = Instance.new("TextLabel")
     nameLbl.Size = UDim2.new(1, -80, 0, 16)
+    nameLbl.Position = UDim2.fromOffset(12, 7)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Font = Enum.Font.GothamMedium
+    nameLbl.TextSize = 12
+    nameLbl.TextColor3 = Theme.dim
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.Text = text
+    nameLbl.Parent = row
 
     local valueLbl = Instance.new("TextLabel")
-    valueLbl.Position = UDim2.new(1, -70, 0, 7)
     valueLbl.Size = UDim2.fromOffset(58, 16)
+    valueLbl.Position = UDim2.new(1, -70, 0, 7)
     valueLbl.BackgroundTransparency = 1
     valueLbl.Font = Enum.Font.GothamBold
     valueLbl.TextSize = 12
@@ -939,7 +1112,7 @@ local function makeSlider(parent, text, minv, maxv, stepv, get, set, decimals)
         local v = get()
         local f = 0
         if maxv > minv then
-            f = math.clamp((v - minv) / (maxv - minv), 0, 1)
+            f = clamp((v - minv) / (maxv - minv), 0, 1)
         end
         fill.Size = UDim2.new(f, 0, 1, 0)
         knob.Position = UDim2.new(f, 0, 0.5, 0)
@@ -949,10 +1122,10 @@ local function makeSlider(parent, text, minv, maxv, stepv, get, set, decimals)
     local function valueFromX(x)
         local ap = hit.AbsolutePosition
         local asz = hit.AbsoluteSize
-        local f = math.clamp((x - ap.X) / math.max(asz.X, 1), 0, 1)
+        local f = clamp((x - ap.X) / math.max(asz.X, 1), 0, 1)
         local raw = minv + (maxv - minv) * f
         local v = math.floor((raw + stepv * 0.5) / stepv) * stepv
-        v = math.clamp(v, minv, maxv)
+        v = clamp(v, minv, maxv)
         v = math.floor(v * 1000 + 0.5) / 1000
         set(v)
         paint()
@@ -972,6 +1145,25 @@ local function makeSlider(parent, text, minv, maxv, stepv, get, set, decimals)
     return row
 end
 
+local function makeButton(parent, text, onClick, accent)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 34)
+    b.BackgroundColor3 = accent and Theme.accent or Theme.card
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.TextColor3 = accent and Color3.fromRGB(255, 255, 255) or Theme.text
+    b.Text = text
+    b.LayoutOrder = nextOrder()
+    b.Parent = parent
+    corner(b, 9)
+    b.MouseButton1Click:Connect(function()
+        local ok, err = pcall(onClick, b)
+        if not ok then warn("[Aero] " .. tostring(err)) end
+    end)
+    return b
+end
+
 local function makeHold(parent, text, onDown, onUp, layoutOrder)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(1, 0, 1, 0)
@@ -986,19 +1178,14 @@ local function makeHold(parent, text, onDown, onUp, layoutOrder)
     b.Parent = parent
     corner(b, 8)
 
-    local function primary(input)
-        return input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1
-    end
-
     b.InputBegan:Connect(function(input)
-        if destroyed or not primary(input) then return end
+        if destroyed or not isPrimaryInput(input) then return end
         b.BackgroundColor3 = Theme.accent
         onDown()
     end)
 
     b.InputEnded:Connect(function(input)
-        if not primary(input) then return end
+        if not isPrimaryInput(input) then return end
         b.BackgroundColor3 = Theme.card
         onUp()
     end)
@@ -1006,28 +1193,11 @@ local function makeHold(parent, text, onDown, onUp, layoutOrder)
     return b
 end
 
-local function makeButton(parent, text, onClick, accent)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 34)
-    b.BackgroundColor3 = accent and Theme.accent or Theme.card
-    b.BorderSizePixel = 0
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
-    b.TextColor3 = accent and Color3.fromRGB(255, 255, 255) or Theme.text
-    b.Text = text
-    b.Parent = parent
-    corner(b, 9)
-    b.MouseButton1Click:Connect(function()
-        local ok, err = pcall(onClick, b)
-        if not ok then warn("[Aero] " .. tostring(err)) end
-    end)
-    return b
-end
-
 -- ============================================================
---  tabs content
+--  tabs
 -- ============================================================
 local moveTab = newTab("move")
+
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function()
     return state.speed
 end, function(v)
@@ -1096,6 +1266,12 @@ end, function(v)
     state.flySpeed = v
 end, 0)
 
+makeSwitch(moveTab, "Click TP", function()
+    return state.clickTp
+end, function(v)
+    state.clickTp = v
+end)
+
 local aimTab = newTab("aim")
 
 makeSwitch(aimTab, "Aimbot", function()
@@ -1128,6 +1304,18 @@ end, function(v)
     state.predict = v
 end)
 
+makeSwitch(aimTab, "Triggerbot", function()
+    return state.triggerbot
+end, function(v)
+    state.triggerbot = v
+end)
+
+makeSlider(aimTab, "Trigger FOV", 5, 300, 5, function()
+    return state.triggerFov
+end, function(v)
+    state.triggerFov = v
+end, 0)
+
 local visTab = newTab("vis")
 
 makeSwitch(visTab, "ESP", function()
@@ -1137,13 +1325,43 @@ end, function(v)
     if not v then clearESP() end
 end)
 
+makeSwitch(visTab, "ESP health bars", function()
+    return state.espHealth
+end, function(v)
+    state.espHealth = v
+end)
+
 makeSwitch(visTab, "Fullbright", function()
     return state.fullbright
 end, function(v)
     setFullbright(v)
 end)
 
+makeSwitch(visTab, "Stats overlay", function()
+    return state.stats
+end, function(v)
+    state.stats = v
+end)
+
+makeSwitch(visTab, "FPS booster", function()
+    return state.fpsBoost
+end, function(v)
+    setFpsBoost(v)
+end)
+
 local playersTab = newTab("players")
+
+local statusLbl = Instance.new("TextLabel")
+statusLbl.Size = UDim2.new(1, 0, 0, 14)
+statusLbl.BackgroundTransparency = 1
+statusLbl.Font = Enum.Font.GothamMedium
+statusLbl.TextSize = 10
+statusLbl.TextColor3 = Theme.dim
+statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+statusLbl.Text = ""
+statusLbl.LayoutOrder = 2
+statusLbl.Parent = playersTab
+
 local playerBox = Instance.new("Frame")
 playerBox.Size = UDim2.new(1, 0, 0, 0)
 playerBox.AutomaticSize = Enum.AutomaticSize.Y
@@ -1155,16 +1373,6 @@ local playerLayout = Instance.new("UIListLayout")
 playerLayout.Padding = UDim.new(0, 4)
 playerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 playerLayout.Parent = playerBox
-
-local statusLbl = Instance.new("TextLabel")statusLbl.Size = UDim2.new(1, 0, 0, 14)
-statusLbl.BackgroundTransparency = 1
-statusLbl.Font = Enum.Font.GothamMedium
-statusLbl.TextSize = 10
-statusLbl.TextColor3 = Theme.dim
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.LayoutOrder = 2
-statusLbl.Text = ""
-statusLbl.Parent = playersTab
 
 refreshPlayerList = function()
     for _, child in ipairs(playerBox:GetChildren()) do
@@ -1193,13 +1401,11 @@ refreshPlayerList = function()
             corner(row, 8)
 
             row.MouseButton1Click:Connect(function()
-                local ok, err = pcall(safeTeleport, plr)
-                if not ok then
-                    statusLbl.Text = "teleport failed: " .. tostring(err)
-                elseif err then
-                    statusLbl.Text = "teleport failed: " .. tostring(err)
-                else
+                local ok, reason = safeTeleport(plr)
+                if ok then
                     statusLbl.Text = "teleported to " .. plr.Name
+                else
+                    statusLbl.Text = "teleport failed: " .. tostring(reason)
                 end
             end)
         end
@@ -1217,11 +1423,108 @@ refreshPlayerList = function()
     end
 end
 
-local refreshBtn = makeButton(playersTab, "Refresh list", refreshPlayerList, false)
-refreshBtn.LayoutOrder = 3
-refreshPlayerList()
+local rejoinBtn = makeButton(playersTab, "Rejoin server", function()
+    local ok, err = rejoin()
+    if ok then
+        statusLbl.Text = "rejoining..."
+    else
+        statusLbl.Text = "rejoin failed: " .. tostring(err)
+    end
+end, false)
+rejoinBtn.LayoutOrder = 3
 
+local hopBtn = makeButton(playersTab, "Server hop", function()
+    statusLbl.Text = "searching servers..."
+    local ok, err = serverHop()
+    if ok then
+        statusLbl.Text = "hopping..."
+    else
+        statusLbl.Text = "hop failed: " .. tostring(err)
+    end
+end, false)
+hopBtn.LayoutOrder = 4
+
+local refreshBtn = makeButton(playersTab, "Refresh list", refreshPlayerList, false)
+refreshBtn.LayoutOrder = 5
+
+refreshPlayerList()
 showTab("move")
+
+-- ============================================================
+--  stats overlay
+-- ============================================================
+local statsFrame = Instance.new("Frame")
+statsFrame.Size = UDim2.fromOffset(186, 24)
+statsFrame.AnchorPoint = Vector2.new(0.5, 0)
+statsFrame.Position = UDim2.new(0.5, 0, 0, 10)
+statsFrame.BackgroundColor3 = Theme.bg
+statsFrame.BackgroundTransparency = 0.3
+statsFrame.BorderSizePixel = 0
+statsFrame.Visible = false
+statsFrame.Parent = gui
+corner(statsFrame, 12)
+
+local statsStroke = Instance.new("UIStroke")
+statsStroke.Color = Theme.line
+statsStroke.Thickness = 1
+statsStroke.Transparency = 0.35
+statsStroke.Parent = statsFrame
+
+local statsLabel = Instance.new("TextLabel")
+statsLabel.Size = UDim2.new(1, 0, 1, 0)
+statsLabel.BackgroundTransparency = 1
+statsLabel.Font = Enum.Font.GothamBold
+statsLabel.TextSize = 11
+statsLabel.TextColor3 = Theme.text
+statsLabel.Text = "FPS --   |   -- ms   |   -- MB"
+statsLabel.Parent = statsFrame
+
+local statFrames = 0
+local statFps = 0
+local statClock = os.clock()
+
+local function readPing()
+    local ok, v = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and type(v) == "number" then return math.floor(v) end
+    return nil
+end
+
+local function readMemory()
+    local ok, v = pcall(function()
+        return Stats:GetTotalMemoryUsageMb()
+    end)
+    if ok and type(v) == "number" then return math.floor(v) end
+    return nil
+end
+
+task.spawn(function()
+    while not destroyed do
+        local now = os.clock()
+        if now - statClock >= 0.5 then
+            statFps = math.floor(statFrames / (now - statClock) + 0.5)
+            statFrames = 0
+            statClock = now
+        end
+
+        if state.stats then
+            local ping = readPing()
+            local mem = readMemory()
+            statsLabel.Text = string.format("FPS %d   |   %s ms   |   %s MB",
+                statFps,
+                ping and tostring(ping) or "--",
+                mem and tostring(mem) or "--")
+            statsLabel.TextColor3 = statFps < 30
+                and Color3.fromRGB(255, 120, 120) or Theme.text
+            statsFrame.Visible = true
+        else
+            statsFrame.Visible = false
+        end
+
+        task.wait(0.25)
+    end
+end)
 
 -- ============================================================
 --  runtime
@@ -1243,15 +1546,12 @@ end
 local function frameStep(dt)
     if destroyed then return end
 
-    if state.aimbot then
-        aimStep(dt)
-    end
-    if state.fly then
-        flyStep()
-    end
-    if state.esp then
-        espStep()
-    end
+    statFrames = statFrames + 1
+
+    if state.aimbot then aimStep(dt) end
+    if state.triggerbot then triggerStep() end
+    if state.fly then flyStep() end
+    if state.esp then espStep() end
 
     if fovCircle then
         local cam = workspace.CurrentCamera
@@ -1288,8 +1588,41 @@ local sliderEndConn = UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- if a finger lifts outside the pad the button can miss InputEnded:
--- the pad also carries an explicit stop cell ("x") for that case
+local function isOverRect(x, y, obj)
+    if not obj or not obj.Visible then return false end
+    local ap = obj.AbsolutePosition
+    local asz = obj.AbsoluteSize
+    return x >= ap.X and x <= ap.X + asz.X and y >= ap.Y and y <= ap.Y + asz.Y
+end
+
+local clickTpConn = UserInputService.InputBegan:Connect(function(input, processed)
+    if destroyed or not state.clickTp or processed then return end
+    if input.UserInputType ~= Enum.UserInputType.Touch
+        and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+        return
+    end
+
+    local x, y = input.Position.X, input.Position.Y
+    if isOverRect(x, y, main) or isOverRect(x, y, reopen) then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local inset = GuiService:GetGuiInset()
+    local ray = cam:ViewportPointToRay(x - inset.X, y - inset.Y)
+    local filter = {}
+    local myChar = getChar()
+    if myChar then table.insert(filter, myChar) end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = filter
+
+    local hit = workspace:Raycast(ray.Origin, ray.Direction * 3000, params)
+    if hit then
+        teleportToPosition(hit.Position + Vector3.new(0, 3, 0))
+    end
+end)
 
 local jumpConn = UserInputService.JumpRequest:Connect(function()
     if destroyed or not state.infJump then return end
@@ -1304,33 +1637,23 @@ local charConn = LP.CharacterAdded:Connect(function()
     if destroyed then return end
     applyStats()
     clearFlyInput()
-    if state.fly then
-        setFly(true)
-    end
-    if state.noclip then
-        noclipSaved = {}
-    end
-    if state.esp then
-        clearESP()
+    if state.fly then setFly(true) end
+    if state.noclip then noclipSaved = {} end
+    if state.esp then clearESP() end
+end)
+
+local addedConn = Players.PlayerAdded:Connect(function()
+    if not destroyed and activeTab == "players" then
+        pcall(refreshPlayerList)
     end
 end)
 
-local function playerListConn()
-    return Players.PlayerAdded:Connect(function()
-        if not destroyed and activeTab == "players" then
-            pcall(refreshPlayerList)
-        end
-    end)
-end
-
-local addedConn = playerListConn()
 local removedConn = Players.PlayerRemoving:Connect(function()
     if not destroyed and activeTab == "players" then
         pcall(refreshPlayerList)
     end
 end)
 
--- stats watchdog (only when locked)
 task.spawn(function()
     while not destroyed do
         if state.lockStats then
@@ -1347,7 +1670,6 @@ task.spawn(function()
     end
 end)
 
--- noclip / esp watchdog
 task.spawn(function()
     while not destroyed do
         if state.noclip then
@@ -1370,7 +1692,8 @@ destroy = function()
     destroyed = true
 
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
-    for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, jumpConn, charConn, addedConn, removedConn }) do
+    for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn,
+        jumpConn, charConn, addedConn, removedConn }) do
         pcall(function() conn:Disconnect() end)
     end
 
@@ -1378,8 +1701,10 @@ destroy = function()
     pcall(clearESP)
     pcall(noclipOff)
     pcall(setFullbright, false)
+    pcall(setFpsBoost, false)
     if fovCircle then pcall(function() fovCircle:Remove() end) end
     pcall(function() gui:Destroy() end)
+
     state.esp = false
     state.noclip = false
 
@@ -1391,6 +1716,8 @@ if getgenv then
         destroy = destroy,
         state = state,
         teleport = safeTeleport,
+        rejoin = rejoin,
+        serverHop = serverHop,
     }
 end
 
