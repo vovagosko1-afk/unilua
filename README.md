@@ -14,6 +14,7 @@ Aero is a single-file script with an interactive interface and configurable game
 - **Adjustable settings:** Fly speed, FOV, aim smoothness, and team check
 - **Touch-friendly interface:** Draggable, collapsible controls
 - **Unload option:** Clean up the interface and restore script changes
+- **And other**
 
 ### Built with
 
