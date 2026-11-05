@@ -1,13 +1,14 @@
 --[[
   Universal Cheat Framework — Delta / Fluent
-  Автор: Aero
-  Требования: Delta Executor (Drawing, hookmetamethod, getconnections, firesignal)
-  UI: Fluent
-  Архитектура: Core + Modules + UI. Каждый модуль = { name, desc, enable, disable, settings }
+  Author: Aero
+  Version: 2.0.0
+  Requires: Delta Executor (Drawing, VirtualUser, writefile optional)
+  UI: Fluent (loaded from official releases)
+  Architecture: Core + Modules + UI
 ]]
 
 --============================================================
--- 0. Guard / environment checks
+-- 0. Guard / environment
 --============================================================
 local ENV = getgenv and getgenv() or _G
 if ENV.__UCF_LOADED then
@@ -25,17 +26,20 @@ local Services = {
     CoreGui      = game:GetService("CoreGui"),
     HttpService  = game:GetService("HttpService"),
     Lighting     = game:GetService("Lighting"),
+    VirtualUser  = game:GetService("VirtualUser"),
 }
 local LP = Services.Players.LocalPlayer
 local Camera = Services.Workspace.CurrentCamera
 
 --============================================================
--- 1. Fluent loader (вставь свой Fluent, если нужен оффлайн)
+-- 1. Fluent loader (official releases URL)
 --============================================================
 local Fluent
 do
     local ok, res = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Init.lua"))()
+        return loadstring(game:HttpGet(
+            "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
+        ))()
     end)
     if ok and type(res) == "table" then
         Fluent = res
@@ -46,13 +50,12 @@ do
 end
 
 --============================================================
--- 2. Tiny utilities
+-- 2. Utilities
 --============================================================
 local U = {}
 
 function U.safe(fn, ...)
-    local args = { ... }
-    local ok, err = pcall(function() return fn(table.unpack(args)) end)
+    local ok, err = pcall(fn, ...)
     if not ok then warn("[UCF] error: " .. tostring(err)) end
     return ok, err
 end
@@ -74,17 +77,13 @@ end
 
 function U.alive()
     local h, hrp = U.getHum()
-    return h and hrp and h.Health > 0
+    return h ~= nil and hrp ~= nil and h.Health > 0
 end
 
-function U.isLocalPlayer(plr)
-    return plr == LP
-end
-
-function U.getAlivePlayers()
+function U.getAlivePlayers(excludeLocal)
     local out = {}
     for _, p in ipairs(Services.Players:GetPlayers()) do
-        if p ~= LP and p.Character then
+        if (not excludeLocal or p ~= LP) and p.Character then
             local h = p.Character:FindFirstChildOfClass("Humanoid")
             local hrp = p.Character:FindFirstChild("HumanoidRootPart")
             if h and hrp and h.Health > 0 then
@@ -93,6 +92,33 @@ function U.getAlivePlayers()
         end
     end
     return out
+end
+
+function U.makeDrawing(class, props)
+    local obj
+    local ok = pcall(function() obj = Drawing.new(class) end)
+    if not ok then return nil end
+    if props then
+        for k, v in pairs(props) do pcall(function() obj[k] = v end) end
+    end
+    return obj
+end
+
+function U.writeFile(path, data)
+    if writefile then
+        local ok = pcall(writefile, path, data)
+        if ok then return true end
+    end
+    ENV["__UCF_FILE_" .. path] = data
+    return false
+end
+
+function U.readFile(path)
+    if readfile and isfile and isfile(path) then
+        local ok, res = pcall(readfile, path)
+        if ok then return res end
+    end
+    return ENV["__UCF_FILE_" .. path]
 end
 
 --============================================================
@@ -113,50 +139,26 @@ end
 -- 4. Modules
 --============================================================
 
--- ---------- 4.1 ESP ----------
+-- ---------- ESP ----------
 Register({
     name = "ESP",
     desc = "Highlights players through walls",
-    settings = {
-        Boxes = true,
-        Names = true,
-        Health = true,
-        Distance = true,
-        Tracers = false,
-        TeamCheck = false,
-        MaxDistance = 1000,
-    },
-    _cache = {},
-    _conn = nil,
+    settings = { Boxes = true, Names = true, Health = true, Distance = true,
+                 Tracers = false, TeamCheck = false, MaxDistance = 1000 },
+    _cache = {}, _conn = nil,
 
-    _make = function(self, plr)
-        local draw = {}
-        local ok = pcall(function()
-            draw.Box = Drawing.new("Square")
-            draw.Box.Thickness = 1
-            draw.Box.Filled = false
-            draw.Box.Color = Color3.fromRGB(255, 60, 60)
-
-            draw.Name = Drawing.new("Text")
-            draw.Name.Size = 14
-            draw.Name.Center = true
-            draw.Name.Outline = true
-
-            draw.Health = Drawing.new("Text")
-            draw.Health.Size = 12
-            draw.Health.Center = false
-            draw.Health.Outline = true
-
-            draw.Dist = Drawing.new("Text")
-            draw.Dist.Size = 12
-            draw.Dist.Center = true
-            draw.Dist.Outline = true
-
-            draw.Tracer = Drawing.new("Line")
-            draw.Tracer.Thickness = 1
-            draw.Tracer.Color = Color3.fromRGB(255, 60, 60)
-        end)
-        if not ok then return nil end
+    _make = function(self)
+        local draw = {
+            Box    = U.makeDrawing("Rectangle", { Thickness = 1, Filled = false, Color = Color3.fromRGB(255, 60, 60) }),
+            Name   = U.makeDrawing("Text", { Size = 14, Center = true, Outline = true }),
+            Health = U.makeDrawing("Text", { Size = 12, Center = false, Outline = true }),
+            Dist   = U.makeDrawing("Text", { Size = 12, Center = true, Outline = true }),
+            Tracer = U.makeDrawing("Line", { Thickness = 1, Color = Color3.fromRGB(255, 60, 60) }),
+        }
+        if not draw.Box and not draw.Name then
+            draw.Box = U.makeDrawing("Square", { Thickness = 1, Filled = false, Color = Color3.fromRGB(255, 60, 60) })
+        end
+        if not (draw.Box or draw.Name) then return nil end
         return draw
     end,
 
@@ -170,17 +172,16 @@ Register({
         end
 
         local seen = {}
-        local myPos = U.getHum() and select(2, U.getHum()).Position
+        local _, myHRP = U.getHum()
+        local myPos = myHRP and myHRP.Position
         local viewport = Camera.ViewportSize
 
-        for _, plr in ipairs(U.getAlivePlayers()) do
-            if self.settings.TeamCheck and plr.Team == LP.Team then
-                -- skip
-            else
+        for _, plr in ipairs(U.getAlivePlayers(true)) do
+            if not (self.settings.TeamCheck and plr.Team == LP.Team) then
                 seen[plr] = true
                 local draw = self._cache[plr]
                 if not draw then
-                    draw = self._make(plr)
+                    draw = self._make(self)
                     if draw then self._cache[plr] = draw end
                 end
                 if draw then
@@ -195,52 +196,41 @@ Register({
                         local headScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
                         local footScreen = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
 
-                        if visible then
+                        if visible and draw.Box and draw.Name then
                             local h = math.abs(headScreen.Y - footScreen.Y)
                             local w = h * 0.55
                             local x = screenPos.X - w / 2
                             local y = headScreen.Y
 
+                            draw.Box.Visible = self.settings.Boxes
                             if self.settings.Boxes then
-                                draw.Box.Visible = true
                                 draw.Box.Size = Vector2.new(w, h)
                                 draw.Box.Position = Vector2.new(x, y)
-                            else
-                                draw.Box.Visible = false
                             end
 
+                            draw.Name.Visible = self.settings.Names
                             if self.settings.Names then
-                                draw.Name.Visible = true
                                 draw.Name.Text = plr.Name
                                 draw.Name.Position = Vector2.new(screenPos.X, y - 18)
-                            else
-                                draw.Name.Visible = false
                             end
 
+                            draw.Health.Visible = self.settings.Health
                             if self.settings.Health then
-                                draw.Health.Visible = true
                                 draw.Health.Text = string.format("HP: %d", math.floor(hum.Health))
                                 draw.Health.Color = Color3.fromRGB(255, math.floor(255 * hum.Health / hum.MaxHealth), 0)
                                 draw.Health.Position = Vector2.new(x + w + 4, y)
-                            else
-                                draw.Health.Visible = false
                             end
 
+                            draw.Dist.Visible = self.settings.Distance
                             if self.settings.Distance then
-                                draw.Dist.Visible = true
                                 draw.Dist.Text = string.format("%dm", math.floor(dist))
                                 draw.Dist.Position = Vector2.new(screenPos.X, y + h + 4)
-                            else
-                                draw.Dist.Visible = false
                             end
 
-                            if self.settings.Tracers and myPos then
-                                local myScreen = Camera:WorldToViewportPoint(myPos)
-                                draw.Tracer.Visible = true
+                            draw.Tracer.Visible = self.settings.Tracers and myPos ~= nil
+                            if draw.Tracer.Visible then
                                 draw.Tracer.From = Vector2.new(viewport.X / 2, viewport.Y)
                                 draw.Tracer.To = Vector2.new(screenPos.X, screenPos.Y)
-                            else
-                                draw.Tracer.Visible = false
                             end
                         else
                             for _, obj in pairs(draw) do
@@ -265,7 +255,6 @@ Register({
             U.safe(self._update, self)
         end)
     end,
-
     disable = function(self)
         if self._conn then self._conn:Disconnect() self._conn = nil end
         for _, draw in pairs(self._cache) do
@@ -275,44 +264,36 @@ Register({
     end,
 })
 
--- ---------- 4.2 Aimbot ----------
+-- ---------- Aimbot ----------
 Register({
     name = "Aimbot",
     desc = "Snaps camera to nearest target in FOV",
-    settings = {
-        FOV = 120,
-        Smoothness = 0.15,
-        TeamCheck = true,
-        WallCheck = true,
-        HoldKey = true,
-        Key = Enum.UserInputType.MouseButton2,
-        Part = "Head",
-    },
+    settings = { FOV = 120, Smoothness = 0.15, TeamCheck = true, WallCheck = true,
+                 HoldKey = true, Key = Enum.UserInputType.MouseButton2, Part = "Head" },
     _conn = nil,
-    _draw = nil,
 
     _getTarget = function(self)
         local fov = self.settings.FOV / 2
         local center = Camera.ViewportSize / 2
         local best, bestDist = nil, math.huge
-
-        for _, plr in ipairs(U.getAlivePlayers()) do
-            if self.settings.TeamCheck and plr.Team == LP.Team then continue end
-            local char = plr.Character
-            local part = char and char:FindFirstChild(self.settings.Part)
-            if part then
-                local sp = Camera:WorldToViewportPoint(part.Position)
-                if sp.Z > 0 then
-                    local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                    if d <= fov and d < bestDist then
-                        if self.settings.WallCheck then
-                            local ray = Ray.new(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position))
-                            local hit = Services.Workspace:FindPartOnRayWithIgnoreList(ray, {LP.Character, Camera})
-                            if hit and hit:IsDescendantOf(char) then
+        for _, plr in ipairs(U.getAlivePlayers(true)) do
+            if not (self.settings.TeamCheck and plr.Team == LP.Team) then
+                local char = plr.Character
+                local part = char and char:FindFirstChild(self.settings.Part)
+                if part then
+                    local sp = Camera:WorldToViewportPoint(part.Position)
+                    if sp.Z > 0 then
+                        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if d <= fov and d < bestDist then
+                            if self.settings.WallCheck then
+                                local ray = Ray.new(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position))
+                                local hit = Services.Workspace:FindPartOnRayWithIgnoreList(ray, { LP.Character, Camera })
+                                if hit and hit:IsDescendantOf(char) then
+                                    best, bestDist = part, d
+                                end
+                            else
                                 best, bestDist = part, d
                             end
-                        else
-                            best, bestDist = part, d
                         end
                     end
                 end
@@ -322,7 +303,7 @@ Register({
     end,
 
     _step = function(self)
-        local target = self._getTarget()
+        local target = self._getTarget(self)
         if target then
             local goal = CFrame.new(Camera.CFrame.Position, target.Position)
             Camera.CFrame = Camera.CFrame:Lerp(goal, self.settings.Smoothness)
@@ -331,34 +312,28 @@ Register({
 
     enable = function(self)
         self._conn = Services.RunService.RenderStepped:Connect(function()
-            if self.settings.HoldKey and not Services.UserInput.IsMouseButtonPressed(self.settings.Key) then
-                return
+            if self.settings.HoldKey and Services.UserInput.IsMouseButtonPressed then
+                local ok, pressed = pcall(Services.UserInput.IsMouseButtonPressed, Services.UserInput, self.settings.Key)
+                if not ok or not pressed then return end
             end
             U.safe(self._step, self)
         end)
     end,
-
     disable = function(self)
         if self._conn then self._conn:Disconnect() self._conn = nil end
     end,
 })
 
--- ---------- 4.3 Fly ----------
+-- ---------- Fly ----------
 Register({
     name = "Fly",
     desc = "Free flight (velocity-based)",
-    settings = {
-        Speed = 60,
-        Key = Enum.KeyCode.F,
-    },
-    _conn = nil,
-    _bv = nil,
-    _gyro = nil,
+    settings = { Speed = 60 },
+    _conn = nil, _bv = nil, _gyro = nil,
 
     enable = function(self)
         if not U.alive() then U.notify("Fly", "Dead"); return end
-        local char = U.getChar()
-        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local _, hrp = U.getHum()
         if not hrp then return end
 
         self._bv = Instance.new("BodyVelocity")
@@ -382,14 +357,11 @@ Register({
             if Services.UserInput:IsKeyDown(Enum.KeyCode.D) then move = move + cam.RightVector end
             if Services.UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0, 1, 0) end
             if Services.UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0, 1, 0) end
-            if move.Magnitude > 0 then
-                move = move.Unit * self.settings.Speed
-            end
+            if move.Magnitude > 0 then move = move.Unit * self.settings.Speed end
             self._bv.Velocity = move
             self._gyro.CFrame = cam
         end)
     end,
-
     disable = function(self)
         if self._conn then self._conn:Disconnect() self._conn = nil end
         if self._bv then self._bv:Destroy() self._bv = nil end
@@ -397,7 +369,7 @@ Register({
     end,
 })
 
--- ---------- 4.4 Speed ----------
+-- ---------- Speed ----------
 Register({
     name = "Speed",
     desc = "Increases walkspeed",
@@ -416,7 +388,7 @@ Register({
     end,
 })
 
--- ---------- 4.5 Noclip ----------
+-- ---------- Noclip ----------
 Register({
     name = "Noclip",
     desc = "Disables collision with map",
@@ -434,24 +406,23 @@ Register({
     end,
 })
 
--- ---------- 4.6 Teleport ----------
+-- ---------- Teleport ----------
 Register({
     name = "Teleport",
     desc = "Teleport to player or coordinates",
-    settings = { Target = nil },
+    settings = {},
     _teleportTo = function(self, vec3)
-        local h, hrp = U.getHum()
+        local _, hrp = U.getHum()
         if hrp then hrp.CFrame = CFrame.new(vec3 + Vector3.new(0, 3, 0)) end
     end,
     enable = function() end,
     disable = function() end,
 })
 
--- ---------- 4.7 Fullbright ----------
+-- ---------- Fullbright ----------
 Register({
     name = "Fullbright",
     desc = "Removes darkness",
-    settings = {},
     _saved = nil,
     enable = function(self)
         self._saved = {
@@ -474,16 +445,264 @@ Register({
     end,
 })
 
--- ---------- 4.8 Anti-AFK ----------
+-- ---------- Anti-AFK ----------
 Register({
     name = "AntiAFK",
     desc = "Prevents idle kick",
     _conn = nil,
     enable = function(self)
-        self._conn = Services.Players.LocalPlayer.Idled:Connect(function()
-            local vu = game:GetService("VirtualUser")
-            vu:CaptureController()
-            vu:ClickButton2(Vector2.zero)
+        self._conn = LP.Idled:Connect(function()
+            Services.VirtualUser:CaptureController()
+            Services.VirtualUser:ClickButton2(Vector2.zero)
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+    end,
+})
+
+-- ---------- Infinite Jump ----------
+Register({
+    name = "InfiniteJump",
+    desc = "Jump mid-air",
+    _conn = nil,
+    enable = function(self)
+        self._conn = Services.UserInput.JumpRequest:Connect(function()
+            if U.alive() then
+                local h = U.getHum()
+                if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+            end
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+    end,
+})
+
+-- ---------- Walk on Water ----------
+Register({
+    name = "WalkOnWater",
+    desc = "Spawns a platform under your feet",
+    _platform = nil, _conn = nil,
+    enable = function(self)
+        local _, hrp = U.getHum()
+        if not hrp then return end
+        self._platform = Instance.new("Part")
+        self._platform.Size = Vector3.new(6, 1, 6)
+        self._platform.Anchored = true
+        self._platform.CanCollide = true
+        self._platform.Transparency = 1
+        self._platform.Name = "UCF_WaterPlatform"
+        self._platform.Parent = Services.Workspace
+        self._conn = Services.RunService.Stepped:Connect(function()
+            local _, h = U.getHum()
+            if h and self._platform then
+                self._platform.Position = h.Position - Vector3.new(0, 3.5, 0)
+            end
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+        if self._platform then self._platform:Destroy() self._platform = nil end
+    end,
+})
+
+-- ---------- Freeze Players ----------
+Register({
+    name = "FreezePlayers",
+    desc = "Anchors all other players in place",
+    _saved = {}, _conn = nil,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            for _, p in ipairs(Services.Players:GetPlayers()) do
+                if p ~= LP and p.Character then
+                    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and not self._saved[hrp] then
+                        self._saved[hrp] = hrp.Anchored
+                        hrp.Anchored = true
+                    end
+                end
+            end
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+        for part, prev in pairs(self._saved) do
+            if part and part.Parent then part.Anchored = prev end
+        end
+        self._saved = {}
+    end,
+})
+
+-- ---------- Hitbox Expander ----------
+Register({
+    name = "HitboxExpander",
+    desc = "Enlarges player hitboxes",
+    settings = { Size = 6, Part = "HumanoidRootPart" },
+    _saved = {}, _conn = nil,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            for _, p in ipairs(U.getAlivePlayers(true)) do
+                local part = p.Character and p.Character:FindFirstChild(self.settings.Part)
+                if part and not self._saved[part] then
+                    self._saved[part] = part.Size
+                end
+                if part then
+                    local s = self.settings.Size
+                    part.Size = Vector3.new(s, s, s)
+                    part.Transparency = 0.7
+                    part.CanCollide = false
+                end
+            end
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+        for part, size in pairs(self._saved) do
+            if part and part.Parent then
+                part.Size = size
+                part.Transparency = 0
+                part.CanCollide = true
+            end
+        end
+        self._saved = {}
+    end,
+})
+
+-- ---------- Kill Aura ----------
+Register({
+    name = "KillAura",
+    desc = "Auto-attacks nearby players (fires Tool)",
+    settings = { Range = 30, Delay = 0.25 },
+    _conn = nil, _last = 0,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            if os.clock() - self._last < self.settings.Delay then return end
+            local _, myHRP = U.getHum()
+            if not myHRP then return end
+            for _, p in ipairs(U.getAlivePlayers(true)) do
+                local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                if hrp and (hrp.Position - myHRP.Position).Magnitude <= self.settings.Range then
+                    local tool = U.getChar():FindFirstChildOfClass("Tool")
+                    if tool then
+                        pcall(function() tool:Activate() end)
+                    end
+                    break
+                end
+            end
+            self._last = os.clock()
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+    end,
+})
+
+-- ---------- Auto Clicker ----------
+Register({
+    name = "AutoClicker",
+    desc = "Clicks automatically",
+    settings = { Delay = 0.1 },
+    _conn = nil, _last = 0,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            if os.clock() - self._last < self.settings.Delay then return end
+            Services.VirtualUser:CaptureController()
+            Services.VirtualUser:ClickButton1(Vector2.new(0, 0), Camera.CFrame)
+            self._last = os.clock()
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+    end,
+})
+
+-- ---------- Gravity Control ----------
+Register({
+    name = "GravityControl",
+    desc = "Modifies workspace gravity",
+    settings = { Value = 196.2 },
+    _saved = nil,
+    enable = function(self)
+        self._saved = Services.Workspace.Gravity
+        Services.Workspace.Gravity = self.settings.Value
+    end,
+    disable = function(self)
+        if self._saved then Services.Workspace.Gravity = self._saved end
+    end,
+})
+
+-- ---------- Anti-Fling ----------
+Register({
+    name = "AntiFling",
+    desc = "Removes external BodyVelocity/AngularVelocity on your HRP",
+    _conn = nil,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            local _, hrp = U.getHum()
+            if not hrp then return end
+            for _, child in ipairs(hrp:GetChildren()) do
+                if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+                    if child ~= Modules.Fly._bv and child ~= Modules.Fly._gyro then
+                        pcall(function() child:Destroy() end)
+                    end
+                end
+            end
+        end)
+    end,
+    disable = function(self)
+        if self._conn then self._conn:Disconnect() self._conn = nil end
+    end,
+})
+
+-- ---------- Waypoint Save/Load ----------
+Register({
+    name = "Waypoint",
+    desc = "Save/load teleport waypoints",
+    settings = { path = "ucf_waypoints.json" },
+    enable = function() end,
+    disable = function() end,
+    _points = nil,
+    _load = function(self)
+        local raw = U.readFile(self.settings.path)
+        if raw then
+            local ok, decoded = pcall(function() return Services.HttpService:JSONDecode(raw) end)
+            if ok and type(decoded) == "table" then self._points = decoded; return end
+        end
+        self._points = {}
+    end,
+    save = function(self, name, vec3)
+        if not self._points then self:_load() end
+        self._points[name] = { x = vec3.X, y = vec3.Y, z = vec3.Z }
+        local ok, encoded = pcall(function() return Services.HttpService:JSONEncode(self._points) end)
+        if ok then U.writeFile(self.settings.path, encoded) end
+    end,
+    get = function(self, name)
+        if not self._points then self:_load() end
+        local p = self._points[name]
+        if p then return Vector3.new(p.x, p.y, p.z) end
+        return nil
+    end,
+})
+
+-- ---------- Chat Spam ----------
+Register({
+    name = "ChatSpam",
+    desc = "Repeats a message periodically",
+    settings = { Message = "UCF was here", Delay = 2 },
+    _conn = nil, _last = 0,
+    enable = function(self)
+        self._conn = Services.RunService.Heartbeat:Connect(function()
+            if os.clock() - self._last < self.settings.Delay then return end
+            pcall(function()
+                local chat = game:GetService("ReplicatedStorage")
+                local events = chat:FindFirstChild("DefaultChatSystemChatEvents")
+                if events then
+                    local say = events:FindFirstChild("SayMessageRequest")
+                    if say then say:FireServer(self.settings.Message, "All") end
+                end
+            end)
+            self._last = os.clock()
         end)
     end,
     disable = function(self)
@@ -496,37 +715,32 @@ Register({
 --============================================================
 local Window = Fluent:CreateWindow({
     Title = "UCF · Delta",
-    SubTitle = "Universal Cheat Framework",
+    SubTitle = "v2.0.0 · Universal Cheat Framework",
     TabWidth = 160,
-    Size = UDim2.fromOffset(540, 420),
+    Size = UDim2.fromOffset(580, 460),
     Acrylic = true,
     Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.RightShift,
 })
 
 local Tabs = {
-    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-    Visual = Window:AddTab({ Title = "Visual", Icon = "eye" }),
-    Combat = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
+    Main     = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Visual   = Window:AddTab({ Title = "Visual", Icon = "eye" }),
+    Combat   = Window:AddTab({ Title = "Combat", Icon = "crosshair" }),
     Movement = Window:AddTab({ Title = "Movement", Icon = "move" }),
+    Utility  = Window:AddTab({ Title = "Utility", Icon = "tool" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
 }
 
-local function Toggle(name, tab)
+local function Toggle(name, tab, description)
     local mod = Modules[name]
     if not mod then return end
     tab:AddToggle(name, {
         Title = name,
-        Description = mod.desc,
+        Description = description or mod.desc,
         Default = false,
         Callback = function(v)
-            if v then
-                U.safe(mod.enable, mod)
-                mod.enabled = true
-            else
-                U.safe(mod.disable, mod)
-                mod.enabled = false
-            end
+            if v then U.safe(mod.enable, mod); mod.enabled = true
+            else U.safe(mod.disable, mod); mod.enabled = false end
         end,
     })
 end
@@ -535,19 +749,40 @@ end
 Toggle("AntiAFK", Tabs.Main)
 Toggle("Teleport", Tabs.Main)
 Tabs.Main:AddButton({
-    Title = "Teleport to player…",
-    Description = "Picks nearest alive player",
+    Title = "Teleport to nearest player",
     Callback = function()
-        local players = U.getAlivePlayers()
-        if #players == 0 then U.notify("Teleport", "No targets") return end
+        local players = U.getAlivePlayers(true)
+        if #players == 0 then U.notify("Teleport", "No targets"); return end
+        local _, myHRP = U.getHum()
         local target = players[1]
+        local bestDist = math.huge
         for _, p in ipairs(players) do
-            local hrp1 = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            local hrp2 = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-            if hrp1 and hrp2 and hrp1.Position.Magnitude < hrp2.Position.Magnitude then target = p end
+            local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and myHRP then
+                local d = (hrp.Position - myHRP.Position).Magnitude
+                if d < bestDist then target = p; bestDist = d end
+            end
         end
         local hrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
         if hrp then Modules.Teleport:_teleportTo(hrp.Position) end
+    end,
+})
+Tabs.Main:AddButton({
+    Title = "Save current position",
+    Callback = function()
+        local _, hrp = U.getHum()
+        if hrp then
+            Modules.Waypoint:save("last", hrp.Position)
+            U.notify("Waypoint", "Saved last position")
+        end
+    end,
+})
+Tabs.Main:AddButton({
+    Title = "Load last position",
+    Callback = function()
+        local p = Modules.Waypoint:get("last")
+        if p then Modules.Teleport:_teleportTo(p)
+        else U.notify("Waypoint", "No saved position") end
     end,
 })
 
@@ -566,6 +801,10 @@ Tabs.Combat:AddSlider("aim_fov", { Title = "Aimbot · FOV", Default = 120, Min =
 Tabs.Combat:AddSlider("aim_smooth", { Title = "Aimbot · Smooth", Default = 15, Min = 1, Max = 100, Rounding = 0, Callback = function(v) Modules.Aimbot.settings.Smoothness = v / 100 end })
 Tabs.Combat:AddToggle("aim_wall", { Title = "Aimbot · Wall Check", Default = true, Callback = function(v) Modules.Aimbot.settings.WallCheck = v end })
 Tabs.Combat:AddToggle("aim_team", { Title = "Aimbot · Team Check", Default = true, Callback = function(v) Modules.Aimbot.settings.TeamCheck = v end })
+Toggle("KillAura", Tabs.Combat)
+Tabs.Combat:AddSlider("kill_range", { Title = "KillAura · Range", Default = 30, Min = 5, Max = 100, Rounding = 0, Callback = function(v) Modules.KillAura.settings.Range = v end })
+Toggle("HitboxExpander", Tabs.Combat)
+Tabs.Combat:AddSlider("hitbox_size", { Title = "Hitbox · Size", Default = 6, Min = 2, Max = 20, Rounding = 0, Callback = function(v) Modules.HitboxExpander.settings.Size = v end })
 
 -- Movement
 Toggle("Fly", Tabs.Movement)
@@ -573,20 +812,42 @@ Tabs.Movement:AddSlider("fly_speed", { Title = "Fly · Speed", Default = 60, Min
 Toggle("Speed", Tabs.Movement)
 Tabs.Movement:AddSlider("speed_val", { Title = "Speed · Value", Default = 60, Min = 16, Max = 500, Rounding = 0, Callback = function(v) Modules.Speed.settings.Value = v end })
 Toggle("Noclip", Tabs.Movement)
+Toggle("InfiniteJump", Tabs.Movement)
+Toggle("WalkOnWater", Tabs.Movement)
+Toggle("GravityControl", Tabs.Movement)
+Tabs.Movement:AddSlider("gravity_val", { Title = "Gravity · Value", Default = 196, Min = 0, Max = 500, Rounding = 0, Callback = function(v) Modules.GravityControl.settings.Value = v end })
+
+-- Utility
+Toggle("FreezePlayers", Tabs.Utility)
+Toggle("AntiFling", Tabs.Utility)
+Toggle("AutoClicker", Tabs.Utility)
+Tabs.Utility:AddSlider("click_delay", { Title = "AutoClicker · Delay", Default = 10, Min = 1, Max = 100, Rounding = 0, Callback = function(v) Modules.AutoClicker.settings.Delay = v / 100 end })
+Toggle("ChatSpam", Tabs.Utility)
+Tabs.Utility:AddInput("spam_msg", { Title = "ChatSpam · Message", Default = "UCF was here", Callback = function(v) Modules.ChatSpam.settings.Message = v end })
+Tabs.Utility:AddSlider("spam_delay", { Title = "ChatSpam · Delay", Default = 20, Min = 1, Max = 100, Rounding = 0, Callback = function(v) Modules.ChatSpam.settings.Delay = v / 10 end })
 
 -- Settings
 Tabs.Settings:AddButton({
     Title = "Unload UCF",
-    Description = "Disable all modules and close menu",
     Callback = function()
         for _, name in ipairs(ModuleOrder) do
             local m = Modules[name]
             if m and m.enabled and m.disable then U.safe(m.disable, m) end
         end
-        Window:Destroy()
+        local ok = pcall(function() Window:Destroy() end)
+        if not ok then pcall(function() Window:Close() end) end
         ENV.__UCF_LOADED = nil
+    end,
+})
+Tabs.Settings:AddButton({
+    Title = "Print diagnostics",
+    Callback = function()
+        print("[UCF] Drawing:", type(Drawing))
+        print("[UCF] writefile:", type(writefile))
+        print("[UCF] modules:", #ModuleOrder)
+        print("[UCF] player:", LP.Name)
     end,
 })
 
 Window:SelectTab(1)
-U.notify("UCF", "Loaded · " .. tostring(#ModuleOrder) .. " modules", 4)
+U.notify("UCF", "Loaded v2.0.0 · " .. tostring(#ModuleOrder) .. " modules", 4)
