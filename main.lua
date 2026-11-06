@@ -1,7 +1,9 @@
 --[[
-    Aero v2.5 - custom UI edition + improved aimbot
-    Tabs: MOVE / AIM / VIS / PLAY / WAY / SRV
-    No external dependencies. All v2.4 UI features preserved.
+    Aero v2.7 - custom UI edition
+    - Added: Config system (Save/Load), Iridescent neon frames, Player info in SRV.
+    - Updated defaults: fov = 70, aimPing = 0.6.
+    - Removed: Noclip.
+    - UI: Smaller toggle button (44px).
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -29,14 +31,13 @@ end)
 
 local state = {
     speed = 16, jump = 50, lockStats = false, infJump = false,
-    noclip = false, fly = false, flySpeed = 60, clickTp = false,
-    aimbot = false, fov = 150, smooth = 0.35, teamCheck = false,
+    fly = false, flySpeed = 60, clickTp = false,
+    aimbot = false, fov = 70, smooth = 0.35, teamCheck = false,
     predict = true, triggerbot = false, triggerFov = 45,
     esp = false, espHealth = true, fullbright = false,
     stats = false, fpsBoost = false, bhop = false,
     spin = false, spinSpeed = 8, theme = "violet",
-    -- aimbot improvements
-    visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.12,
+    visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
 }
 
 local destroyed = false
@@ -69,29 +70,6 @@ local function applyJump()
     h.JumpPower = state.jump
 end
 local function applyStats() applySpeed(); applyJump() end
-
--- ============================================================
---  noclip
--- ============================================================
-local noclipSaved = {}
-local function noclipRestore()
-    for part, value in pairs(noclipSaved) do
-        if part and part.Parent and part:IsA("BasePart") then
-            pcall(function() part.CanCollide = value end)
-        end
-    end
-    noclipSaved = {}
-end
-local function noclipPass()
-    local c = getChar()
-    if not c then noclipRestore() return end
-    for _, p in ipairs(c:GetDescendants()) do
-        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-            if noclipSaved[p] == nil then noclipSaved[p] = p.CanCollide end
-            if p.CanCollide then pcall(function() p.CanCollide = false end) end
-        end
-    end
-end
 
 -- ============================================================
 --  fly
@@ -275,13 +253,29 @@ local function rejoin()
     if ok then return true end
     return false, "teleport failed"
 end
+
 local function serverHop()
     local placeId = game.PlaceId
-    local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-    local ok, body = pcall(function() return game:HttpGet(url, true) end)
-    if not ok or type(body) ~= "string" then return false, "http failed" end
-    local decoded, data = pcall(function() return HttpService:JSONDecode(body) end)
-    if not decoded or type(data) ~= "table" or type(data.data) ~= "table" then return false, "bad response" end
+    local urls = {
+        "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100",
+        "https://games.rprxy.xyz/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100",
+        "https://games.overscan.io/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+    }
+    local data = nil
+    local lastErr = "unknown"
+    for _, url in ipairs(urls) do
+        local ok, body = pcall(function()
+            return game:HttpGet(url, true, { ["User-Agent"] = "Roblox/WinInet", ["Accept"] = "application/json" })
+        end)
+        if ok and type(body) == "string" then
+            local decoded, parsed = pcall(function() return HttpService:JSONDecode(body) end)
+            if decoded and type(parsed) == "table" and parsed.data then
+                data = parsed
+                break
+            else lastErr = "bad json" end
+        else lastErr = "http " .. tostring(body) end
+    end
+    if not data or not data.data then return false, lastErr end
     local pool = {}
     for _, srv in ipairs(data.data) do
         if type(srv) == "table" and srv.id and srv.id ~= game.JobId then
@@ -529,26 +523,38 @@ local PANEL_W, PANEL_H, TAB_BAR_H = 300, 440, 46
 local main = Instance.new("Frame"); main.Name = "AeroMain"; main.Size = UDim2.fromOffset(PANEL_W, PANEL_H); main.Position = UDim2.fromOffset(16, 80); main.BackgroundColor3 = Theme.bg; main.BorderSizePixel = 0; main.Active = true; main.ClipsDescendants = true; main.ZIndex = 10; main.Parent = gui; corner(main, 16)
 
 local mainStroke = Instance.new("UIStroke"); mainStroke.Color = Theme.neonA; mainStroke.Thickness = 2; mainStroke.Transparency = 0.05; mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; mainStroke.Parent = main
-local mainGradient = Instance.new("UIGradient"); mainGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonA), ColorSequenceKeypoint.new(0.33, Theme.neonB), ColorSequenceKeypoint.new(0.66, Theme.neonA), ColorSequenceKeypoint.new(1.00, Theme.neonB) }); mainGradient.Parent = mainStroke
+local mainGradient = Instance.new("UIGradient"); mainGradient.Parent = mainStroke
 local mainGlow = Instance.new("UIStroke"); mainGlow.Color = Theme.neonB; mainGlow.Thickness = 6; mainGlow.Transparency = 0.85; mainGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; mainGlow.Parent = main
-local mainGlowGradient = Instance.new("UIGradient"); mainGlowGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) }); mainGlowGradient.Parent = mainGlow
+local mainGlowGradient = Instance.new("UIGradient"); mainGlowGradient.Parent = mainGlow
 
--- reopen
-local reopen = Instance.new("TextButton"); reopen.Name = "AeroToggle"; reopen.Size = UDim2.fromOffset(64, 64); reopen.Position = UDim2.fromOffset(16, 16); reopen.BackgroundColor3 = Theme.bg; reopen.BackgroundTransparency = 0.1; reopen.BorderSizePixel = 0; reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 13; reopen.TextColor3 = Theme.accent2; reopen.Text = "aero"; reopen.AutoButtonColor = false; reopen.ZIndex = 10; reopen.Parent = gui; corner(reopen, 32)
+-- reopen (small toggle)
+local reopen = Instance.new("TextButton"); reopen.Name = "AeroToggle"; reopen.Size = UDim2.fromOffset(44, 44); reopen.Position = UDim2.fromOffset(16, 16); reopen.BackgroundColor3 = Theme.bg; reopen.BackgroundTransparency = 0.1; reopen.BorderSizePixel = 0; reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 11; reopen.TextColor3 = Theme.accent2; reopen.Text = "aero"; reopen.AutoButtonColor = false; reopen.ZIndex = 10; reopen.Parent = gui; corner(reopen, 22)
 local reopenStroke = Instance.new("UIStroke"); reopenStroke.Color = Theme.neonA; reopenStroke.Thickness = 2; reopenStroke.Transparency = 0.05; reopenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; reopenStroke.Parent = reopen
-local reopenGradient = Instance.new("UIGradient"); reopenGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonA), ColorSequenceKeypoint.new(0.50, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) }); reopenGradient.Parent = reopenStroke
+local reopenGradient = Instance.new("UIGradient"); reopenGradient.Parent = reopenStroke
 local reopenGlow = Instance.new("UIStroke"); reopenGlow.Color = Theme.neonB; reopenGlow.Thickness = 5; reopenGlow.Transparency = 0.85; reopenGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; reopenGlow.Parent = reopen
-local reopenGlowGradient = Instance.new("UIGradient"); reopenGlowGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) }); reopenGlowGradient.Parent = reopenGlow
+local reopenGlowGradient = Instance.new("UIGradient"); reopenGlowGradient.Parent = reopenGlow
 local reopenUserMoved = false
+
+-- iridescent setup
+local iridescentOffset = 0
+local function updateIridescentGradient(gradient, baseColor)
+    local lighter = Color3.new(math.min(baseColor.R * 1.5, 1), math.min(baseColor.G * 1.5, 1), math.min(baseColor.B * 1.5, 1))
+    local darker = Color3.new(baseColor.R * 0.5, baseColor.G * 0.5, baseColor.B * 0.5)
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.00, darker), ColorSequenceKeypoint.new(0.25, baseColor),
+        ColorSequenceKeypoint.new(0.50, lighter), ColorSequenceKeypoint.new(0.75, baseColor),
+        ColorSequenceKeypoint.new(1.00, darker),
+    })
+end
 
 local function layoutPanel()
     local vp = gui.AbsoluteSize; if vp.X < 10 or vp.Y < 10 then local cam = workspace.CurrentCamera; if cam then vp = cam.ViewportSize end end; if vp.X < 10 then vp = Vector2.new(400, 700) end
     local w = clamp(math.floor(vp.X * 0.52), 258, 340); local h = clamp(math.floor(vp.Y * 0.62), 320, 480)
     PANEL_W = w; PANEL_H = h; main.Size = UDim2.fromOffset(w, h)
     if not reopenUserMoved then reopen.Position = UDim2.fromOffset(16, 16) end
-    local padW = clamp(math.floor(vp.X * 0.16), 56, 76); reopen.Size = UDim2.fromOffset(padW, padW)
+    local padW = 44; reopen.Size = UDim2.fromOffset(padW, padW)
     local cr = reopen:FindFirstChildOfClass("UICorner"); if cr then cr.CornerRadius = UDim.new(0, math.floor(padW * 0.5)) end
-    reopen.TextSize = math.floor(padW * 0.22)
+    reopen.TextSize = math.floor(padW * 0.25)
 end
 
 task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteSize.X > 10 and gui.AbsoluteSize.Y > 10 then break end; task.wait(0.1) end; pcall(layoutPanel) end)
@@ -557,7 +563,7 @@ task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.Abso
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.5"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -682,18 +688,61 @@ local function makeHold(parent, text, onDown, onUp, layoutOrder)
     b.InputEnded:Connect(function(input) if not isPrimaryInput(input) then return end; b.BackgroundColor3 = Theme.card; onUp() end); return b
 end
 
+local function makeDropdown(parent, text, options, get, set)
+    local row = card(parent, 44)
+    local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, -100, 1, 0); lbl.Position = UDim2.fromOffset(12, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 13; lbl.TextColor3 = Theme.text; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = text; lbl.Parent = row
+    local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 80, 0, 26); btn.Position = UDim2.new(1, -92, 0.5, -13); btn.BackgroundColor3 = Theme.cardHi; btn.BorderSizePixel = 0; btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.TextColor3 = Theme.accent2; btn.Text = get(); btn.Parent = row; corner(btn, 6)
+    local idx = 1; for i, v in ipairs(options) do if v == get() then idx = i break end end
+    btn.MouseButton1Click:Connect(function()
+        idx = idx + 1; if idx > #options then idx = 1 end
+        local newVal = options[idx]; set(newVal); btn.Text = newVal
+    end)
+    table.insert(uiRefreshers, function() btn.Text = get(); for i, v in ipairs(options) do if v == get() then idx = i break end end end)
+end
+
 local function applyTheme(name)
     local t = THEMES[name] or THEMES.violet
     Theme.accent = t.accent; Theme.accent2 = t.accent2; Theme.neonA = t.neonA; Theme.neonB = t.neonB; state.theme = name
     pcall(function()
         mainStroke.Color = Theme.neonA; mainGlow.Color = Theme.neonB; reopenStroke.Color = Theme.neonA; reopenGlow.Color = Theme.neonB; reopen.TextColor3 = Theme.accent2; dot.BackgroundColor3 = Theme.accent
-        mainGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonA), ColorSequenceKeypoint.new(0.33, Theme.neonB), ColorSequenceKeypoint.new(0.66, Theme.neonA), ColorSequenceKeypoint.new(1.00, Theme.neonB) })
-        mainGlowGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) })
-        reopenGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonA), ColorSequenceKeypoint.new(0.50, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) })
-        reopenGlowGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0.00, Theme.neonB), ColorSequenceKeypoint.new(1.00, Theme.neonA) })
+        updateIridescentGradient(mainGradient, Theme.neonA)
+        updateIridescentGradient(mainGlowGradient, Theme.neonB)
+        updateIridescentGradient(reopenGradient, Theme.neonA)
+        updateIridescentGradient(reopenGlowGradient, Theme.neonB)
         if fovCircle then fovCircle.Color = Theme.accent end
     end)
     pcall(refreshTabStyles); pcall(syncUI); if notify then notify("theme: " .. name, "ok") end
+end
+
+-- config system
+local function saveConfig()
+    local cfg = {
+        state = state,
+        waypoints = {}
+    }
+    for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
+    if ok then
+        local wOk = pcall(function() writefile("AeroConfig.json", encoded) end)
+        if wOk then notify("config saved", "ok") else notify("save failed", "err") end
+    else notify("encode failed", "err") end
+end
+
+local function loadConfig()
+    local rOk, content = pcall(function() return readfile("AeroConfig.json") end)
+    if not rOk or not content then notify("config not found", "warn") return end
+    local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
+    if dOk and type(cfg) == "table" then
+        if cfg.state then
+            for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
+        end
+        if cfg.waypoints then
+            for k in pairs(waypoints) do waypoints[k] = nil end
+            for k, v in pairs(cfg.waypoints) do waypoints[k] = Vector3.new(v.x, v.y, v.z) end
+        end
+        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList(); refreshThemeButtons()
+        notify("config loaded", "ok")
+    else notify("decode failed", "err") end
 end
 
 -- MOVE
@@ -703,7 +752,6 @@ makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, f
 makeSwitch(moveTab, "Lock stats", function() return state.lockStats end, function(v) state.lockStats = v; if v then applyStats() end end)
 makeSwitch(moveTab, "Infinite jump", function() return state.infJump end, function(v) state.infJump = v end)
 makeSwitch(moveTab, "BHop", function() return state.bhop end, function(v) setBhop(v); notify("bhop " .. (v and "on" or "off"), v and "ok" or "info") end)
-makeSwitch(moveTab, "Noclip", function() return state.noclip end, function(v) state.noclip = v; if not v then noclipRestore() end; notify("noclip " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSwitch(moveTab, "Fly", function() return state.fly end, function(v) setFly(v); notify("fly " .. (v and "on" or "off"), v and "ok" or "info") end)
 
 local pad = Instance.new("Frame"); pad.Size = UDim2.new(1, 0, 0, 88); pad.BackgroundTransparency = 1; pad.LayoutOrder = nextOrder(); pad.Parent = moveTab
@@ -727,23 +775,10 @@ makeSlider(aimTab, "FOV", 20, 600, 10, function() return state.fov end, function
 makeSlider(aimTab, "Smoothing", 0, 0.95, 0.05, function() return state.smooth end, function(v) state.smooth = v end, 2)
 makeSwitch(aimTab, "Team check", function() return state.teamCheck end, function(v) state.teamCheck = v end)
 makeSwitch(aimTab, "Prediction", function() return state.predict end, function(v) state.predict = v end)
-makeSlider(aimTab, "Prediction Ping", 0, 0.5, 0.01, function() return state.aimPing end, function(v) state.aimPing = v end, 2)
+makeSlider(aimTab, "Prediction Ping", 0, 0.8, 0.05, function() return state.aimPing end, function(v) state.aimPing = v end, 2)
 makeSwitch(aimTab, "Visibility check", function() return state.visibleCheck end, function(v) state.visibleCheck = v end)
 makeSwitch(aimTab, "Triggerbot", function() return state.triggerbot end, function(v) state.triggerbot = v; notify("triggerbot " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSlider(aimTab, "Trigger FOV", 5, 300, 5, function() return state.triggerFov end, function(v) state.triggerFov = v end, 0)
-
--- Добавляем дропдауны для Target Priority и Hitbox
-local function makeDropdown(parent, text, options, get, set)
-    local row = card(parent, 44)
-    local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, -100, 1, 0); lbl.Position = UDim2.fromOffset(12, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 13; lbl.TextColor3 = Theme.text; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = text; lbl.Parent = row
-    local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0, 80, 0, 26); btn.Position = UDim2.new(1, -92, 0.5, -13); btn.BackgroundColor3 = Theme.cardHi; btn.BorderSizePixel = 0; btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.TextColor3 = Theme.accent2; btn.Text = get(); btn.Parent = row; corner(btn, 6)
-    local idx = 1; for i, v in ipairs(options) do if v == get() then idx = i break end end
-    btn.MouseButton1Click:Connect(function()
-        idx = idx + 1; if idx > #options then idx = 1 end
-        local newVal = options[idx]; set(newVal); btn.Text = newVal
-    end)
-end
-
 makeDropdown(aimTab, "Target Priority", {"closest", "lowhp", "threat"}, function() return state.targetMode end, function(v) state.targetMode = v end)
 makeDropdown(aimTab, "Hitbox", {"head", "root", "torso"}, function() return state.hitbox end, function(v) state.hitbox = v end)
 
@@ -768,6 +803,9 @@ for i, name in ipairs(themeNames) do
     b.MouseButton1Click:Connect(function() applyTheme(name); refreshThemeButtons() end); themeButtons[name] = b
 end
 refreshThemeButtons()
+
+local configSaveBtn = makeButton(visTab, "Save Config", saveConfig, true); configSaveBtn.LayoutOrder = nextOrder()
+local configLoadBtn = makeButton(visTab, "Load Config", loadConfig, false); configLoadBtn.LayoutOrder = nextOrder()
 
 -- PLAY
 local playersTab = newTab("players")
@@ -829,9 +867,10 @@ local function serverRow(key, layoutOrder)
     local v = Instance.new("TextLabel"); v.Size = UDim2.new(0.58, -10, 1, 0); v.Position = UDim2.new(0.42, 0, 0, 0); v.BackgroundTransparency = 1; v.Font = Enum.Font.GothamBold; v.TextSize = 11; v.TextColor3 = Theme.text; v.TextXAlignment = Enum.TextXAlignment.Right; v.TextTruncate = Enum.TextTruncate.AtEnd; v.Text = "--"; v.Parent = row; return v
 end
 
-local jobIdLbl = serverRow("JobId", 1); local placeIdLbl = serverRow("PlaceId", 2); local versionLbl = serverRow("PlaceVersion", 3); local playersLbl = serverRow("Players", 4); local pingLbl = serverRow("Ping", 5); local memLbl = serverRow("Memory", 6); local uptimeLbl = serverRow("Session uptime", 7); local streamingLbl = serverRow("Streaming", 8); local gravityLbl = serverRow("Gravity", 9)
+local playerInfoLbl = serverRow("Player info", 1); local jobIdLbl = serverRow("JobId", 2); local placeIdLbl = serverRow("PlaceId", 3); local versionLbl = serverRow("PlaceVersion", 4); local playersLbl = serverRow("Players", 5); local pingLbl = serverRow("Ping", 6); local memLbl = serverRow("Memory", 7); local uptimeLbl = serverRow("Session uptime", 8); local streamingLbl = serverRow("Streaming", 9); local gravityLbl = serverRow("Gravity", 10)
 
 refreshServerInfo = function()
+    pcall(function() playerInfoLbl.Text = LP.Name .. " (" .. LP.UserId .. ")" end)
     pcall(function() jobIdLbl.Text = game.JobId ~= "" and game.JobId or "(private)" end)
     pcall(function() placeIdLbl.Text = tostring(game.PlaceId) end)
     pcall(function() versionLbl.Text = tostring(game.PlaceVersion) end)
@@ -848,8 +887,8 @@ local copyBtn = makeButton(srvTab, "Copy JobId", function()
     if jid == "" then srvStatus.Text = "no job id (private server)"; notify("no job id", "warn"); return end
     local ok = false; if type(setclipboard) == "function" then ok = pcall(setclipboard, jid) end; if not ok and type(toclipboard) == "function" then ok = pcall(toclipboard, jid) end
     srvStatus.Text = ok and "copied job id" or "clipboard unavailable"; notify(ok and "copied job id" or "clipboard unavailable", ok and "ok" or "err")
-end, false); copyBtn.LayoutOrder = 10
-local srvRefreshBtn = makeButton(srvTab, "Refresh info", function() refreshServerInfo(); srvStatus.Text = "refreshed"; notify("server info refreshed", "ok") end, false); srvRefreshBtn.LayoutOrder = 11
+end, false); copyBtn.LayoutOrder = 11
+local srvRefreshBtn = makeButton(srvTab, "Refresh info", function() refreshServerInfo(); srvStatus.Text = "refreshed"; notify("server info refreshed", "ok") end, false); srvRefreshBtn.LayoutOrder = 12
 
 task.spawn(function() while not destroyed do if activeTab == "srv" and refreshServerInfo then pcall(refreshServerInfo) end; task.wait(1) end end)
 
@@ -873,12 +912,15 @@ end)
 local fovCircle = nil
 if DrawingLib then local ok, circle = pcall(function() local c = DrawingLib.new("Circle"); c.Thickness = 1; c.Filled = false; c.Transparency = 0.6; c.Color = Theme.accent; c.Visible = false; return c end); if ok then fovCircle = circle end end
 
-local gradientAngle = 0
 local function frameStep(dt)
     if destroyed then return end
     statFrames = statFrames + 1
-    gradientAngle = (gradientAngle + dt * 90) % 360
-    mainGradient.Rotation = gradientAngle; mainGlowGradient.Rotation = gradientAngle; reopenGradient.Rotation = gradientAngle; reopenGlowGradient.Rotation = gradientAngle
+    iridescentOffset = (iridescentOffset + dt * 0.15) % 1
+    mainGradient.Offset = Vector2.new(iridescentOffset, 0)
+    reopenGradient.Offset = Vector2.new(iridescentOffset, 0)
+    mainGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
+    reopenGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
+
     if state.aimbot then aimStep(dt) end; if state.triggerbot then triggerStep() end; if state.fly then flyStep() end; if state.spin then spinStep(dt) end; if state.esp or next(espItems) or next(espHighlights) then espStep() end
     if fovCircle then local cam = workspace.CurrentCamera; if state.aimbot and cam then fovCircle.Position = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5); fovCircle.Radius = state.fov; fovCircle.Visible = true else fovCircle.Visible = false end end
 end
@@ -898,10 +940,9 @@ local clickTpConn = UserInputService.InputBegan:Connect(function(input, processe
 end)
 
 local jumpConn = UserInputService.JumpRequest:Connect(function() if destroyed or not state.infJump then return end; local h = getHum(); if h and h.Health > 0 then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
-local charConn = LP.CharacterAdded:Connect(function() task.wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.noclip then noclipSaved = {} end; if state.esp then clearESP() end end)
+local charConn = LP.CharacterAdded:Connect(function() task.wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.esp then clearESP() end end)
 
 task.spawn(function() while not destroyed do if state.lockStats then local h = getHum(); if h and h.Health > 0 then if h.WalkSpeed ~= state.speed then h.WalkSpeed = state.speed end; if h.UseJumpPower ~= true then pcall(function() h.UseJumpPower = true end) end; if h.JumpPower ~= state.jump then h.JumpPower = state.jump end end end; task.wait(0.4) end end)
-task.spawn(function() while not destroyed do if state.noclip then pcall(noclipPass) elseif next(noclipSaved) then pcall(noclipRestore) end; task.wait(0.1) end end)
 
 local camConn = nil; if workspace.CurrentCamera then camConn = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function() pcall(layoutPanel) end) end
 
@@ -909,14 +950,15 @@ destroy = function()
     if destroyed then return end; destroyed = true
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
     for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn, jumpConn, charConn, camConn, bhopConn }) do if conn then pcall(function() conn:Disconnect() end) end end
-    pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(clearESP); pcall(noclipRestore); pcall(setFullbright, false); pcall(setFpsBoost, false)
+    pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(clearESP); pcall(setFullbright, false); pcall(setFpsBoost, false)
     if fovCircle then pcall(function() fovCircle:Remove() end) end; pcall(function() gui:Destroy() end)
-    state.esp = false; state.noclip = false; state.spin = false
+    state.esp = false; state.spin = false
     if getgenv then getgenv().__Aero = nil end
 end
 
 if getgenv then
-    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo }
+    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
 end
 
+applyTheme(state.theme)
 layoutPanel(); refreshPlayerList(); refreshWaypointList(); refreshServerInfo(); refreshThemeButtons(); showTab("move"); syncUI()
