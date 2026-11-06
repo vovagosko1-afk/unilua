@@ -11,8 +11,8 @@
 -- ============================================================
 local function loadOrion()
     local sources = {
-        "https://raw.githubusercontent.com/shlexware/Orion/main/source",
-        "https://raw.githubusercontent.com/NoLag-id/Orion/main/source",
+    "https://raw.githubusercontent.com/jensonhirst/Orion/main/source",
+    "https://raw.githubusercontent.com/OrionLibrary/Orion/main/source.lua",
     }
 
     -- 1. try remote URLs
