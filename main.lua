@@ -1,16 +1,10 @@
 --[[
-    Aero v2.8.3 - Universal Executor Support
-    - Fixed: "attempt to call a nil value" by creating a safe wait wrapper.
-    - Wrapped initialization in pcall.
+    Aero v2.8.4 - Delta Safe Startup
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
     pcall(getgenv().__Aero.destroy)
 end
-
--- Safe universal wait function
-local wait = wait or (task and task.wait) or function(t) local n = tick() + (t or 0); while tick() < n do end end
-local spawn = spawn or (task and task.spawn) or function(f) coroutine.wrap(f)() end
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -26,6 +20,7 @@ local SoundService     = game:GetService("SoundService")
 local LP = Players.LocalPlayer
 if not LP then return end
 
+-- Универсальные обертки (не используют warn)
 local function safeReadFile(path)
     if type(readfile) == "function" then
         local ok, res = pcall(readfile, path)
@@ -40,10 +35,6 @@ local function safeWriteFile(path, content)
         if ok then return true end
     end
     return false
-end
-
-local function getGuiParent()
-    return LP:WaitForChild("PlayerGui")
 end
 
 local DrawingLib = nil
@@ -79,6 +70,11 @@ local function clamp(v, a, b)
     if v < a then return a end
     if v > b then return b end
     return v
+end
+
+-- Безопасная проверка интерфейса (без gethui)
+local function getGuiParent()
+    return LP:WaitForChild("PlayerGui")
 end
 
 -- ============================================================
