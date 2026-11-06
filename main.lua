@@ -1,12 +1,16 @@
 --[[
-    Aero v2.8.2 - Legacy Delta support
-    - Replaced task.spawn/wait with coroutine/wait for old executors.
-    - Replaced gethui with direct PlayerGui.
+    Aero v2.8.3 - Universal Executor Support
+    - Fixed: "attempt to call a nil value" by creating a safe wait wrapper.
+    - Wrapped initialization in pcall.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
     pcall(getgenv().__Aero.destroy)
 end
+
+-- Safe universal wait function
+local wait = wait or (task and task.wait) or function(t) local n = tick() + (t or 0); while tick() < n do end end
+local spawn = spawn or (task and task.spawn) or function(f) coroutine.wrap(f)() end
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -22,7 +26,6 @@ local SoundService     = game:GetService("SoundService")
 local LP = Players.LocalPlayer
 if not LP then return end
 
--- Safe function wrappers
 local function safeReadFile(path)
     if type(readfile) == "function" then
         local ok, res = pcall(readfile, path)
@@ -39,7 +42,6 @@ local function safeWriteFile(path, content)
     return false
 end
 
--- Replaced gethui with PlayerGui
 local function getGuiParent()
     return LP:WaitForChild("PlayerGui")
 end
@@ -232,14 +234,14 @@ local function teleportToPosition(pos)
     if not myChar or not myRoot then return false end
     myRoot.AssemblyLinearVelocity = Vector3.zero; myRoot.AssemblyAngularVelocity = Vector3.zero
     myChar:PivotTo(CFrame.new(pos))
-    coroutine.wrap(function()
+    spawn(function()
         for _ = 1, 8 do
             if destroyed then return end
             local root = getHRP(); if not root then return end
             root.AssemblyLinearVelocity = Vector3.zero; root.AssemblyAngularVelocity = Vector3.zero
             wait(0.03)
         end
-    end)()
+    end)
     return true
 end
 local function safeTeleport(plr)
@@ -534,7 +536,7 @@ local function playNotifySound(kind)
     else s.SoundId = "rbxassetid://6739879750" end
     s.Parent = SoundService
     s:Play()
-    coroutine.wrap(function() wait(1); if s then s:Destroy() end end)()
+    spawn(function() wait(1); if s then s:Destroy() end end)
 end
 
 notify = function(text, kind, duration)
@@ -552,7 +554,7 @@ notify = function(text, kind, duration)
     TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.05 }):Play()
     TweenService:Create(stroke, TweenInfo.new(0.18), { Transparency = 0.1 }):Play()
     TweenService:Create(lbl, TweenInfo.new(0.18), { TextTransparency = 0 }):Play()
-    coroutine.wrap(function()
+    spawn(function()
         wait(duration)
         if not frame or not frame.Parent then return end
         TweenService:Create(frame, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play(); TweenService:Create(lbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
@@ -562,7 +564,7 @@ notify = function(text, kind, duration)
             local idx = nil; for i, t in ipairs(toastActive) do if t == frame then idx = i break end end
             if idx then table.remove(toastActive, idx) end; frame:Destroy()
         end
-    end)()
+    end)
 end
 
 -- panel
@@ -604,13 +606,13 @@ local function layoutPanel()
     reopen.TextSize = math.floor(padW * 0.25)
 end
 
-coroutine.wrap(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteSize.X > 10 and gui.AbsoluteSize.Y > 10 then break end; wait(0.1) end; pcall(layoutPanel) end)()
+spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteSize.X > 10 and gui.AbsoluteSize.Y > 10 then break end; wait(0.1) end; pcall(layoutPanel) end)
 
 -- header
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8.2"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8.3"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -982,7 +984,7 @@ local copyBtn = makeButton(srvTab, "Copy JobId", function()
 end, false); copyBtn.LayoutOrder = 11
 local srvRefreshBtn = makeButton(srvTab, "Refresh info", function() refreshServerInfo(); srvStatus.Text = "refreshed"; notify("server info refreshed", "ok") end, false); srvRefreshBtn.LayoutOrder = 12
 
-coroutine.wrap(function() while not destroyed do if activeTab == "srv" and refreshServerInfo then pcall(refreshServerInfo) end; wait(1) end end)()
+spawn(function() while not destroyed do if activeTab == "srv" and refreshServerInfo then pcall(refreshServerInfo) end; wait(1) end end)
 
 -- stats overlay
 local statsFrame = Instance.new("Frame"); statsFrame.Size = UDim2.fromOffset(220, 24); statsFrame.AnchorPoint = Vector2.new(0.5, 0); statsFrame.Position = UDim2.new(0.5, 0, 0, 10); statsFrame.BackgroundColor3 = Theme.bg; statsFrame.BackgroundTransparency = 0.3; statsFrame.BorderSizePixel = 0; statsFrame.Visible = false; statsFrame.ZIndex = 20; statsFrame.Parent = gui; corner(statsFrame, 12)
@@ -990,7 +992,7 @@ local statsStroke = Instance.new("UIStroke"); statsStroke.Color = Theme.line; st
 local statsLabel = Instance.new("TextLabel"); statsLabel.Size = UDim2.new(1, 0, 1, 0); statsLabel.BackgroundTransparency = 1; statsLabel.Font = Enum.Font.GothamBold; statsLabel.TextSize = 11; statsLabel.TextColor3 = Theme.text; statsLabel.Text = "FPS --   |   -- ms   |   -- MB"; statsLabel.Parent = statsFrame
 local statFrames, statFps, lastStatTime = 0, 0, tick()
 
-coroutine.wrap(function()
+spawn(function()
     while not destroyed do
         local now = tick()
         local elapsed = now - lastStatTime
@@ -1012,7 +1014,7 @@ coroutine.wrap(function()
         else statsFrame.Visible = false end
         wait(0.25)
     end
-end)()
+end)
 
 local fovCircle = nil
 if DrawingLib then local ok, circle = pcall(function() local c = DrawingLib.new("Circle"); c.Thickness = 1; c.Filled = false; c.Transparency = 0.6; c.Color = Theme.accent; c.Visible = false; return c end); if ok then fovCircle = circle end end
@@ -1045,9 +1047,9 @@ local clickTpConn = UserInputService.InputBegan:Connect(function(input, processe
 end)
 
 local jumpConn = UserInputService.JumpRequest:Connect(function() if destroyed or not state.infJump then return end; local h = getHum(); if h and h.Health > 0 then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
-local charConn = LP.CharacterAdded:Connect(function() coroutine.wrap(function() wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.esp then clearESP() end end)() end)
+local charConn = LP.CharacterAdded:Connect(function() spawn(function() wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.esp then clearESP() end end) end)
 
-coroutine.wrap(function() while not destroyed do if state.lockStats then local h = getHum(); if h and h.Health > 0 then if h.WalkSpeed ~= state.speed then h.WalkSpeed = state.speed end; if h.UseJumpPower ~= true then pcall(function() h.UseJumpPower = true end) end; if h.JumpPower ~= state.jump then h.JumpPower = state.jump end end end; wait(0.4) end end)()
+spawn(function() while not destroyed do if state.lockStats then local h = getHum(); if h and h.Health > 0 then if h.WalkSpeed ~= state.speed then h.WalkSpeed = state.speed end; if h.UseJumpPower ~= true then pcall(function() h.UseJumpPower = true end) end; if h.JumpPower ~= state.jump then h.JumpPower = state.jump end end end; wait(0.4) end end)
 
 local camConn = nil; if workspace.CurrentCamera then camConn = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function() pcall(layoutPanel) end) end
 
