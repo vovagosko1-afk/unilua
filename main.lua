@@ -1,10 +1,7 @@
 --[[
-    Aero v2.8 - custom UI edition
-    - Added: Notification sound, Config Auto-Load, Server Region, ESP Tool info, 
-             Speed Presets, FOV Color Picker.
-    - Fixed: Config load applying theme before UI sync, ESP updating tool names.
-    - Defaults: fov = 70, aimPing = 0.05.
-    - Removed: Noclip.
+    Aero v2.8.1 - custom UI edition
+    - Fixed: Added safe wrappers for readfile, writefile, gethui (Delta crash fix).
+    - Removed: Auto-Load config (use UI button instead).
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -24,6 +21,31 @@ local SoundService     = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 if not LP then return end
+
+-- Safe function wrappers (Delta fix)
+local function safeReadFile(path)
+    if type(readfile) == "function" then
+        local ok, res = pcall(readfile, path)
+        if ok then return res end
+    end
+    return nil
+end
+
+local function safeWriteFile(path, content)
+    if type(writefile) == "function" then
+        local ok, res = pcall(writefile, path, content)
+        if ok then return true end
+    end
+    return false
+end
+
+local function safeGethui()
+    if type(gethui) == "function" then
+        local ok, res = pcall(gethui)
+        if ok and res then return res end
+    end
+    return LP:WaitForChild("PlayerGui")
+end
 
 local DrawingLib = nil
 pcall(function()
@@ -491,14 +513,13 @@ local THEMES = {
 }
 
 local function corner(parent, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = parent; return c end
-local function resolveGuiParent() local ok, hui = pcall(function() return gethui and gethui() end); if ok and hui then return hui end; return LP:WaitForChild("PlayerGui") end
 
 local destroy
 local notify
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "Aero"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; gui.DisplayOrder = 1000
-gui.Parent = resolveGuiParent(); if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+gui.Parent = safeGethui()
 
 -- toasts
 local toastHolder = Instance.new("Frame")
@@ -592,7 +613,7 @@ task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.Abso
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8.1"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -752,14 +773,14 @@ local function saveConfig()
     for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
     local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
     if ok then
-        local wOk = pcall(function() writefile("AeroConfig.json", encoded) end)
-        if wOk then notify("config saved", "ok") else notify("save failed", "err") end
+        local wOk = safeWriteFile("AeroConfig.json", encoded)
+        if wOk then notify("config saved", "ok") else notify("save failed (no writefile)", "err") end
     else notify("encode failed", "err") end
 end
 
 local function loadConfig()
-    local rOk, content = pcall(function() return readfile("AeroConfig.json") end)
-    if not rOk or not content then notify("config not found", "warn") return end
+    local content = safeReadFile("AeroConfig.json")
+    if not content then notify("config not found", "warn") return end
     local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
     if dOk and type(cfg) == "table" then
         if cfg.state then
@@ -1047,11 +1068,13 @@ if getgenv then
     getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
 end
 
-applyTheme(state.theme)
-layoutPanel(); refreshPlayerList(); refreshWaypointList(); refreshServerInfo(); refreshThemeButtons(); showTab("move"); syncUI()
-
--- Auto-Load Config on start
-if type(readfile) == "function" then
-    local rOk = pcall(function() return readfile("AeroConfig.json") end)
-    if rOk then loadConfig() end
-end
+pcall(function()
+    applyTheme(state.theme)
+    layoutPanel()
+    refreshPlayerList()
+    refreshWaypointList()
+    refreshServerInfo()
+    refreshThemeButtons()
+    showTab("move")
+    syncUI()
+end)
