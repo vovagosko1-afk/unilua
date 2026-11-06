@@ -1722,5 +1722,3 @@ if getgenv then
 end
 
 syncUI()
-
-look at this script on .lua
