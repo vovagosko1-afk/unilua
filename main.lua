@@ -1,6 +1,9 @@
 --[[
-    Aero v2.1 - mobile executor UI for Delta (Android)
-    Tabs: MOVE / AIM / VIS / PLAY
+    Aero v2.2 - mobile executor UI for Delta (Android)
+    Tabs: MOVE / AIM / VIS / PLAY / WAY
+    Changes: noclip fix, waypoints, bhop, spinbot, neon frame,
+             floating button text, honest FPS/ping overlay,
+             click-TP inset fix, screen rotation handling.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -21,7 +24,8 @@ if not LP then return end
 
 local DrawingLib = nil
 pcall(function()
-    if typeof(Drawing) == "table" and Drawing.new then
+    local ok, v = pcall(function() return Drawing.new end)
+    if ok and type(v) == "function" then
         DrawingLib = Drawing
     end
 end)
@@ -32,7 +36,8 @@ local state = {
     aimbot = false, fov = 150, smooth = 0.35, teamCheck = false,
     predict = true, triggerbot = false, triggerFov = 45,
     esp = false, espHealth = true, fullbright = false,
-    stats = false, fpsBoost = false,
+    stats = false, fpsBoost = false, bhop = false,
+    spin = false, spinSpeed = 8,
 }
 
 local destroyed = false
@@ -79,26 +84,34 @@ local function applyStats()
 end
 
 -- ============================================================
---  noclip
+--  noclip (fixed)
+--  per-part saved value; periodic pass; restores real state
 -- ============================================================
 local noclipSaved = {}
 
-local function noclipOff()
+local function noclipRestore()
     for part, value in pairs(noclipSaved) do
-        if part and part.Parent then
+        if part and part.Parent and part:IsA("BasePart") then
             pcall(function() part.CanCollide = value end)
         end
     end
     noclipSaved = {}
 end
 
-local function noclipOn()
+local function noclipPass()
     local c = getChar()
-    if not c then return end
+    if not c then
+        noclipRestore()
+        return
+    end
     for _, p in ipairs(c:GetDescendants()) do
-        if p:IsA("BasePart") and p.CanCollide then
-            noclipSaved[p] = true
-            p.CanCollide = false
+        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+            if noclipSaved[p] == nil then
+                noclipSaved[p] = p.CanCollide
+            end
+            if p.CanCollide then
+                pcall(function() p.CanCollide = false end)
+            end
         end
     end
 end
@@ -175,6 +188,55 @@ local function flyStep()
 end
 
 -- ============================================================
+--  bhop
+-- ============================================================
+local bhopState = { last = 0 }
+local bhopConn = nil
+
+local function bhopStep()
+    if not state.bhop then return end
+    local h = getHum()
+    if not h or h.Health <= 0 then return end
+    if h:GetState() == Enum.HumanoidStateType.Freefall
+        or h:GetState() == Enum.HumanoidStateType.Jumping then
+        return
+    end
+    local now = os.clock()
+    if now - bhopState.last < 0.05 then return end
+    bhopState.last = now
+    pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+end
+
+local function setBhop(on)
+    state.bhop = on
+    if on and not bhopConn then
+        bhopConn = RunService.Heartbeat:Connect(function()
+            if destroyed then return end
+            bhopStep()
+        end)
+    elseif not on and bhopConn then
+        pcall(function() bhopConn:Disconnect() end)
+        bhopConn = nil
+    end
+end
+
+-- ============================================================
+--  spinbot (does not touch aimbot)
+-- ============================================================
+local spinAngle = 0
+
+local function spinStep(dt)
+    if not state.spin then return end
+    local root = getHRP()
+    local h = getHum()
+    if not root or not h or h.Health <= 0 then return end
+    spinAngle = (spinAngle + math.rad(state.spinSpeed) * dt * 60) % (math.pi * 2)
+    local pos = root.Position
+    local look = Vector3.new(math.sin(spinAngle), 0, math.cos(spinAngle))
+    root.CFrame = CFrame.new(pos, pos + look)
+end
+
+-- ============================================================
 --  lighting / fullbright
 -- ============================================================
 local savedLighting = nil
@@ -207,7 +269,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster
+--  fps booster (fixed: preserves original QualityLevel)
 -- ============================================================
 local boostState = nil
 
@@ -215,6 +277,8 @@ local function setFpsBoost(on)
     state.fpsBoost = on
     if on then
         if boostState then return end
+        local ql = nil
+        pcall(function() ql = settings().Rendering.QualityLevel end)
         boostState = {
             effects = {},
             lighting = {
@@ -223,9 +287,12 @@ local function setFpsBoost(on)
                 EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
                 EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
             },
+            quality = ql,
         }
 
-        pcall(function() settings().Rendering.QualityLevel = 1 end)
+        if ql then
+            pcall(function() settings().Rendering.QualityLevel = 1 end)
+        end
         Lighting.GlobalShadows = false
         Lighting.ShadowSoftness = 0
         Lighting.EnvironmentDiffuseScale = 0
@@ -252,7 +319,9 @@ local function setFpsBoost(on)
         for k, v in pairs(boostState.lighting) do
             pcall(function() Lighting[k] = v end)
         end
-        pcall(function() settings().Rendering.QualityLevel = 3 end)
+        if boostState.quality then
+            pcall(function() settings().Rendering.QualityLevel = boostState.quality end)
+        end
         boostState = nil
     end
 end
@@ -314,6 +383,34 @@ local function safeTeleport(plr)
 end
 
 -- ============================================================
+--  waypoints
+-- ============================================================
+local waypoints = (getgenv and getgenv().__AeroWaypoints) or {}
+if getgenv then getgenv().__AeroWaypoints = waypoints end
+
+local function saveWaypoint()
+    local root = getHRP()
+    if not root then return nil, "no root" end
+    local p = root.Position
+    local name = string.format("%.0f,%.0f,%.0f", p.X, p.Y, p.Z)
+    if waypoints[name] then
+        return nil, "duplicate"
+    end
+    waypoints[name] = p
+    return name
+end
+
+local function deleteWaypoint(name)
+    waypoints[name] = nil
+end
+
+local function tpWaypoint(name)
+    local p = waypoints[name]
+    if not p then return false, "missing" end
+    return teleportToPosition(p)
+end
+
+-- ============================================================
 --  server hop / rejoin
 -- ============================================================
 local function rejoin()
@@ -362,7 +459,7 @@ local function serverHop()
 end
 
 -- ============================================================
---  aim / trigger
+--  aim / trigger  (unchanged from v2.1)
 -- ============================================================
 local function pickTarget(fov)
     local cam = workspace.CurrentCamera
@@ -447,9 +544,10 @@ local function triggerStep()
 end
 
 -- ============================================================
---  ESP
+--  ESP (Drawing primary, Highlight fallback)
 -- ============================================================
 local espItems = {}
+local espHighlights = {}
 local espFallback = {}
 
 local function hideItem(item)
@@ -509,6 +607,10 @@ local function clearESP()
         removeItem(item)
         espItems[plr] = nil
     end
+    for plr, hl in pairs(espHighlights) do
+        pcall(function() hl:Destroy() end)
+        espHighlights[plr] = nil
+    end
     for plr, hl in pairs(espFallback) do
         pcall(function() hl:Destroy() end)
         espFallback[plr] = nil
@@ -523,60 +625,21 @@ local function espColor(plr, hum)
     return Color3.fromRGB(124, 92, 255)
 end
 
-local function espFallbackStep()
+local function espStep()
     if not state.esp then
-        for plr, hl in pairs(espFallback) do
-            pcall(function() hl:Destroy() end)
-            espFallback[plr] = nil
+        if next(espItems) then
+            for _, item in pairs(espItems) do hideItem(item) end
         end
-        return
-    end
-
-    for plr, hl in pairs(espFallback) do
-        if not plr.Parent or not plr.Character or not hl or not hl.Parent then
-            if hl then pcall(function() hl:Destroy() end) end
-            espFallback[plr] = nil
-        end
-    end
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local c = plr.Character
-            local hum = c and c:FindFirstChildOfClass("Humanoid")
-            if c and hum then
-                local hl = espFallback[plr]
-                if not hl or not hl.Parent then
-                    hl = Instance.new("Highlight")
-                    hl.Name = "AeroESP"
-                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    hl.FillTransparency = 0.65
-                    hl.OutlineTransparency = 0
-                    hl.Parent = c
-                    espFallback[plr] = hl
-                end
-                local color = espColor(plr, hum)
-                hl.Adornee = c
-                hl.FillColor = color
-                hl.OutlineColor = color
+        if next(espHighlights) then
+            for _, hl in pairs(espHighlights) do
+                if hl and hl.Parent then hl.Enabled = false end
             end
         end
-    end
-end
-
-local function espStep()
-    if not DrawingLib then
-        espFallbackStep()
-        return
-    end
-
-    if not state.esp then
-        for _, item in pairs(espItems) do hideItem(item) end
         return
     end
 
     local cam = workspace.CurrentCamera
     if not cam then return end
-
     local seen = {}
 
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -587,56 +650,75 @@ local function espStep()
 
             if c and head and hum then
                 seen[plr] = true
+                local color = espColor(plr, hum)
 
-                local item = espItems[plr]
-                if not item then
-                    item = newItem()
-                    espItems[plr] = item
+                -- highlight fallback (always on, works when Drawing missing)
+                local hl = espHighlights[plr]
+                if not hl or not hl.Parent then
+                    hl = Instance.new("Highlight")
+                    hl.Name = "AeroHL"
+                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    hl.FillTransparency = 0.65
+                    hl.OutlineTransparency = 0
+                    hl.Parent = c
+                    espHighlights[plr] = hl
                 end
+                hl.Adornee = c
+                hl.FillColor = color
+                hl.OutlineColor = color
+                hl.Enabled = true
 
-                local top = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.4, 0))
-                local bottom = cam:WorldToViewportPoint(head.Position - Vector3.new(0, 2.8, 0))
-
-                if top.Z > 0 and bottom.Z > 0 then
-                    local h = math.abs(bottom.Y - top.Y)
-                    if h < 6 then h = 6 end
-                    local w = h * 0.55
-                    local color = espColor(plr, hum)
-
-                    item.box.Color = color
-                    item.box.Size = Vector2.new(w, h)
-                    item.box.Position = Vector2.new(top.X - w * 0.5, top.Y)
-                    item.box.Visible = true
-
-                    item.name.Color = color
-                    item.name.Text = plr.Name
-                    item.name.Position = Vector2.new(top.X, top.Y - 16)
-                    item.name.Visible = true
-
-                    local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
-                    item.info.Color = Color3.fromRGB(230, 230, 240)
-                    item.info.Text = string.format("%d m   %d hp", dist, math.floor(hum.Health))
-                    item.info.Position = Vector2.new(top.X, top.Y + h + 2)
-                    item.info.Visible = true
-
-                    if state.espHealth then
-                        local maxHp = math.max(hum.MaxHealth, 1)
-                        local frac = clamp(hum.Health / maxHp, 0, 1)
-                        local barX = top.X - w * 0.5 - 7
-                        item.hpBg.Position = Vector2.new(barX, top.Y)
-                        item.hpBg.Size = Vector2.new(4, h)
-                        item.hpBg.Visible = true
-                        item.hp.Position = Vector2.new(barX, top.Y + h * (1 - frac))
-                        item.hp.Size = Vector2.new(4, h * frac)
-                        item.hp.Color = Color3.fromRGB(235, 70, 70):Lerp(
-                            Color3.fromRGB(80, 235, 130), frac)
-                        item.hp.Visible = true
-                    else
-                        item.hpBg.Visible = false
-                        item.hp.Visible = false
+                -- drawing boxes
+                if DrawingLib then
+                    local item = espItems[plr]
+                    if not item then
+                        item = newItem()
+                        espItems[plr] = item
                     end
-                else
-                    hideItem(item)
+
+                    local top = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.4, 0))
+                    local bottom = cam:WorldToViewportPoint(head.Position - Vector3.new(0, 2.8, 0))
+
+                    if top.Z > 0 and bottom.Z > 0 then
+                        local h = math.abs(bottom.Y - top.Y)
+                        if h < 6 then h = 6 end
+                        local w = h * 0.55
+
+                        item.box.Color = color
+                        item.box.Size = Vector2.new(w, h)
+                        item.box.Position = Vector2.new(top.X - w * 0.5, top.Y)
+                        item.box.Visible = true
+
+                        item.name.Color = color
+                        item.name.Text = plr.Name
+                        item.name.Position = Vector2.new(top.X, top.Y - 16)
+                        item.name.Visible = true
+
+                        local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
+                        item.info.Color = Color3.fromRGB(230, 230, 240)
+                        item.info.Text = string.format("%d m   %d hp", dist, math.floor(hum.Health))
+                        item.info.Position = Vector2.new(top.X, top.Y + h + 2)
+                        item.info.Visible = true
+
+                        if state.espHealth then
+                            local maxHp = math.max(hum.MaxHealth, 1)
+                            local frac = clamp(hum.Health / maxHp, 0, 1)
+                            local barX = top.X - w * 0.5 - 7
+                            item.hpBg.Position = Vector2.new(barX, top.Y)
+                            item.hpBg.Size = Vector2.new(4, h)
+                            item.hpBg.Visible = true
+                            item.hp.Position = Vector2.new(barX, top.Y + h * (1 - frac))
+                            item.hp.Size = Vector2.new(4, h * frac)
+                            item.hp.Color = Color3.fromRGB(235, 70, 70):Lerp(
+                                Color3.fromRGB(80, 235, 130), frac)
+                            item.hp.Visible = true
+                        else
+                            item.hpBg.Visible = false
+                            item.hp.Visible = false
+                        end
+                    else
+                        hideItem(item)
+                    end
                 end
             end
         end
@@ -644,6 +726,11 @@ local function espStep()
 
     for plr, item in pairs(espItems) do
         if not seen[plr] then hideItem(item) end
+    end
+    for plr, hl in pairs(espHighlights) do
+        if not seen[plr] then
+            if hl and hl.Parent then hl.Enabled = false end
+        end
     end
 end
 
@@ -659,6 +746,8 @@ local Theme = {
     dim = Color3.fromRGB(138, 138, 160),
     accent = Color3.fromRGB(124, 92, 255),
     accent2 = Color3.fromRGB(86, 200, 255),
+    neonA = Color3.fromRGB(124, 92, 255),
+    neonB = Color3.fromRGB(86, 200, 255),
 }
 
 local function corner(parent, r)
@@ -681,21 +770,29 @@ local destroy
 local gui = Instance.new("ScreenGui")
 gui.Name = "Aero"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
+gui.IgnoreGuiInset = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.DisplayOrder = 1000
 gui.Parent = resolveGuiParent()
+if not gui.Parent then
+    gui.Parent = LP:WaitForChild("PlayerGui")
+end
 
-local vp = gui.AbsoluteSize
-if vp.X < 10 then vp = Vector2.new(400, 700) end
+local function viewport()
+    local vp = gui.AbsoluteSize
+    if vp.X < 10 or vp.Y < 10 then
+        local cam = workspace.CurrentCamera
+        if cam then vp = cam.ViewportSize end
+    end
+    if vp.X < 10 then vp = Vector2.new(400, 700) end
+    return vp
+end
 
-local PANEL_W = clamp(math.floor(vp.X * 0.52), 258, 340)
-local PANEL_H = clamp(math.floor(vp.Y * 0.62), 320, 480)
+local PANEL_W = 0
+local PANEL_H = 0
 local TAB_BAR_H = 46
 
 local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
-main.Position = UDim2.new(0, 12, 0.5, -math.floor(PANEL_H * 0.5))
 main.BackgroundColor3 = Theme.bg
 main.BorderSizePixel = 0
 main.Active = true
@@ -704,11 +801,37 @@ main.Parent = gui
 corner(main, 16)
 
 local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Theme.line
-mainStroke.Thickness = 1
-mainStroke.Transparency = 0.2
+mainStroke.Color = Theme.neonA
+mainStroke.Thickness = 1.6
+mainStroke.Transparency = 0.15
 mainStroke.Parent = main
 
+local mainGradient = Instance.new("UIGradient")
+mainGradient.Color = ColorSequence.new(Theme.neonA, Theme.neonB)
+mainGradient.Parent = mainStroke
+
+local gradientAngle = 0
+
+local function layoutPanel()
+    local vp = viewport()
+    PANEL_W = clamp(math.floor(vp.X * 0.52), 258, 340)
+    PANEL_H = clamp(math.floor(vp.Y * 0.62), 320, 480)
+
+    main.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
+    local x = clamp(math.floor(vp.X * 0.04), 8, 24)
+    local y = math.floor((vp.Y - PANEL_H) * 0.5)
+    main.Position = UDim2.fromOffset(x, y)
+    main.AnchorPoint = Vector2.zero
+
+    local padW = clamp(math.floor(vp.X * 0.14), 56, 78)
+    reopen.Size = UDim2.fromOffset(padW, padW)
+    reopen.Position = UDim2.new(0, 10, 0, 96)
+    corner(reopen, math.floor(padW * 0.5))
+end
+
+-- ============================================================
+--  header
+-- ============================================================
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 40)
 header.BackgroundTransparency = 1
@@ -794,6 +917,7 @@ local tabs = {}
 local tabButtons = {}
 local activeTab = nil
 local refreshPlayerList
+local refreshWaypointList
 
 local function newTab(id)
     local sf = Instance.new("ScrollingFrame")
@@ -838,6 +962,9 @@ local function showTab(id)
     if id == "players" and refreshPlayerList then
         pcall(refreshPlayerList)
     end
+    if id == "way" and refreshWaypointList then
+        pcall(refreshWaypointList)
+    end
 end
 
 local tabDefs = {
@@ -845,17 +972,19 @@ local tabDefs = {
     { "aim", "AIM" },
     { "vis", "VIS" },
     { "players", "PLAY" },
+    { "way", "WAY" },
 }
 
+local tabN = #tabDefs
 for i, def in ipairs(tabDefs) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.25, -8, 0, 34)
-    b.Position = UDim2.new((i - 1) * 0.25, 4, 0, 6)
+    b.Size = UDim2.new(1 / tabN, -6, 0, 34)
+    b.Position = UDim2.new((i - 1) / tabN, 3, 0, 6)
     b.BackgroundColor3 = Theme.cardHi
     b.BackgroundTransparency = 0.55
     b.BorderSizePixel = 0
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 11
+    b.TextSize = 10
     b.TextColor3 = Theme.dim
     b.Text = def[2]
     b.Parent = tabBar
@@ -866,24 +995,33 @@ for i, def in ipairs(tabDefs) do
     tabButtons[def[1]] = b
 end
 
--- floating toggle
+-- floating toggle with "aero" text
 local reopen = Instance.new("TextButton")
-reopen.Size = UDim2.fromOffset(50, 50)
-reopen.Position = UDim2.new(0, 10, 0, 96)
 reopen.BackgroundColor3 = Theme.bg
 reopen.BorderSizePixel = 0
 reopen.Font = Enum.Font.GothamBold
-reopen.TextSize = 13
+reopen.TextSize = 12
 reopen.TextColor3 = Theme.accent2
-reopen.Text = "A"
+reopen.Text = "aero"
+reopen.AutoButtonColor = false
 reopen.Parent = gui
-corner(reopen, 25)
+corner(reopen, 30)
 
 local reopenStroke = Instance.new("UIStroke")
-reopenStroke.Color = Theme.accent
-reopenStroke.Thickness = 1
-reopenStroke.Transparency = 0.3
+reopenStroke.Color = Theme.neonA
+reopenStroke.Thickness = 1.5
+reopenStroke.Transparency = 0.2
 reopenStroke.Parent = reopen
+
+local reopenGradient = Instance.new("UIGradient")
+reopenGradient.Color = ColorSequence.new(Theme.neonA, Theme.neonB)
+reopenGradient.Parent = reopenStroke
+
+local reopenStroke2 = Instance.new("UIStroke")
+reopenStroke2.Color = Theme.neonB
+reopenStroke2.Thickness = 3
+reopenStroke2.Transparency = 0.75
+reopenStroke2.Parent = reopen
 
 -- ============================================================
 --  drag
@@ -901,6 +1039,7 @@ header.InputBegan:Connect(function(input)
     dragging = true
     local ap = main.AbsolutePosition
     local gp = gui.AbsolutePosition
+    main.AnchorPoint = Vector2.zero
     main.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
     dragStart = input.Position
     dragOrigin = main.Position
@@ -948,8 +1087,8 @@ local dragConn = UserInputService.InputChanged:Connect(function(input)
     if btnDragging and btnStart then
         local d = input.Position - btnStart
         btnMoved = math.max(btnMoved, math.abs(d.X) + math.abs(d.Y))
-        local nx = clamp(btnOrigin.X.Offset + d.X, 0, sw - 50)
-        local ny = clamp(btnOrigin.Y.Offset + d.Y, 0, sh - 50)
+        local nx = clamp(btnOrigin.X.Offset + d.X, 0, sw - reopen.AbsoluteSize.X)
+        local ny = clamp(btnOrigin.Y.Offset + d.Y, 0, sh - reopen.AbsoluteSize.Y)
         reopen.Position = UDim2.new(0, nx, 0, ny)
         return
     end
@@ -1194,7 +1333,7 @@ local function makeHold(parent, text, onDown, onUp, layoutOrder)
 end
 
 -- ============================================================
---  tabs
+--  tabs: MOVE
 -- ============================================================
 local moveTab = newTab("move")
 
@@ -1225,11 +1364,17 @@ end, function(v)
     state.infJump = v
 end)
 
+makeSwitch(moveTab, "BHop", function()
+    return state.bhop
+end, function(v)
+    setBhop(v)
+end)
+
 makeSwitch(moveTab, "Noclip", function()
     return state.noclip
 end, function(v)
     state.noclip = v
-    if not v then noclipOff() end
+    if not v then noclipRestore() end
 end)
 
 makeSwitch(moveTab, "Fly", function()
@@ -1256,9 +1401,9 @@ makeHold(pad, "-", function() flyInput.d = 1 end, function() flyInput.d = 0 end,
 makeHold(pad, "<", function() flyInput.l = 1 end, function() flyInput.l = 0 end, 4)
 makeHold(pad, "x", function() clearFlyInput() end, function() end, 5)
 makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 6)
-makeHold(pad, "", function() end, function() end, 7)
+makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 7)
 makeHold(pad, "v", function() flyInput.b = 1 end, function() flyInput.b = 0 end, 8)
-makeHold(pad, "", function() end, function() end, 9)
+makeHold(pad, "x", function() clearFlyInput() end, function() end, 9)
 
 makeSlider(moveTab, "Fly speed", 10, 400, 5, function()
     return state.flySpeed
@@ -1272,6 +1417,9 @@ end, function(v)
     state.clickTp = v
 end)
 
+-- ============================================================
+--  tabs: AIM
+-- ============================================================
 local aimTab = newTab("aim")
 
 makeSwitch(aimTab, "Aimbot", function()
@@ -1316,6 +1464,9 @@ end, function(v)
     state.triggerFov = v
 end, 0)
 
+-- ============================================================
+--  tabs: VIS
+-- ============================================================
 local visTab = newTab("vis")
 
 makeSwitch(visTab, "ESP", function()
@@ -1349,6 +1500,27 @@ end, function(v)
     setFpsBoost(v)
 end)
 
+makeSwitch(visTab, "Spinbot", function()
+    return state.spin
+end, function(v)
+    state.spin = v
+    if not v then
+        local root = getHRP()
+        if root then
+            root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(0, 0, -1))
+        end
+    end
+end)
+
+makeSlider(visTab, "Spin speed", 1, 30, 1, function()
+    return state.spinSpeed
+end, function(v)
+    state.spinSpeed = v
+end, 0)
+
+-- ============================================================
+--  tabs: PLAY
+-- ============================================================
 local playersTab = newTab("players")
 
 local statusLbl = Instance.new("TextLabel")
@@ -1447,14 +1619,129 @@ hopBtn.LayoutOrder = 4
 local refreshBtn = makeButton(playersTab, "Refresh list", refreshPlayerList, false)
 refreshBtn.LayoutOrder = 5
 
-refreshPlayerList()
-showTab("move")
+-- ============================================================
+--  tabs: WAY
+-- ============================================================
+local wayTab = newTab("way")
+
+local wayStatus = Instance.new("TextLabel")
+wayStatus.Size = UDim2.new(1, 0, 0, 14)
+wayStatus.BackgroundTransparency = 1
+wayStatus.Font = Enum.Font.GothamMedium
+wayStatus.TextSize = 10
+wayStatus.TextColor3 = Theme.dim
+wayStatus.TextXAlignment = Enum.TextXAlignment.Left
+wayStatus.Text = "saved this session"
+wayStatus.LayoutOrder = 1
+wayStatus.Parent = wayTab
+
+local wayBox = Instance.new("Frame")
+wayBox.Size = UDim2.new(1, 0, 0, 0)
+wayBox.AutomaticSize = Enum.AutomaticSize.Y
+wayBox.BackgroundTransparency = 1
+wayBox.LayoutOrder = 2
+wayBox.Parent = wayTab
+
+local wayLayout = Instance.new("UIListLayout")
+wayLayout.Padding = UDim.new(0, 4)
+wayLayout.SortOrder = Enum.SortOrder.LayoutOrder
+wayLayout.Parent = wayBox
+
+refreshWaypointList = function()
+    for _, child in ipairs(wayBox:GetChildren()) do
+        if child:IsA("GuiObject") then child:Destroy() end
+    end
+
+    local names = {}
+    for name in pairs(waypoints) do table.insert(names, name) end
+    table.sort(names)
+
+    if #names == 0 then
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(1, 0, 0, 24)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.GothamMedium
+        l.TextSize = 12
+        l.TextColor3 = Theme.dim
+        l.Text = "no waypoints"
+        l.Parent = wayBox
+        return
+    end
+
+    for i, name in ipairs(names) do
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 34)
+        row.BackgroundColor3 = Theme.card
+        row.BorderSizePixel = 0
+        row.LayoutOrder = i
+        row.Parent = wayBox
+        corner(row, 8)
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -100, 1, 0)
+        lbl.Position = UDim2.fromOffset(10, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = Enum.Font.GothamMedium
+        lbl.TextSize = 11
+        lbl.TextColor3 = Theme.text
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = name
+        lbl.Parent = row
+
+        local tpBtn = Instance.new("TextButton")
+        tpBtn.Size = UDim2.fromOffset(42, 26)
+        tpBtn.Position = UDim2.new(1, -92, 0.5, -13)
+        tpBtn.BackgroundColor3 = Theme.accent
+        tpBtn.BorderSizePixel = 0
+        tpBtn.Font = Enum.Font.GothamBold
+        tpBtn.TextSize = 11
+        tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        tpBtn.Text = "TP"
+        tpBtn.Parent = row
+        corner(tpBtn, 7)
+        tpBtn.MouseButton1Click:Connect(function()
+            local ok, err = tpWaypoint(name)
+            wayStatus.Text = ok and ("tp -> " .. name) or ("tp failed: " .. tostring(err))
+        end)
+
+        local delBtn = Instance.new("TextButton")
+        delBtn.Size = UDim2.fromOffset(42, 26)
+        delBtn.Position = UDim2.new(1, -46, 0.5, -13)
+        delBtn.BackgroundColor3 = Theme.cardHi
+        delBtn.BorderSizePixel = 0
+        delBtn.Font = Enum.Font.GothamBold
+        delBtn.TextSize = 11
+        delBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+        delBtn.Text = "del"
+        delBtn.Parent = row
+        corner(delBtn, 7)
+        delBtn.MouseButton1Click:Connect(function()
+            deleteWaypoint(name)
+            refreshWaypointList()
+            wayStatus.Text = "deleted " .. name
+        end)
+    end
+end
+
+local saveBtn = makeButton(wayTab, "Save current position", function()
+    local name, err = saveWaypoint()
+    if name then
+        refreshWaypointList()
+        wayStatus.Text = "saved " .. name
+    else
+        wayStatus.Text = "save failed: " .. tostring(err)
+    end
+end, true)
+saveBtn.LayoutOrder = 3
+
+local refreshWayBtn = makeButton(wayTab, "Refresh list", refreshWaypointList, false)
+refreshWayBtn.LayoutOrder = 4
 
 -- ============================================================
---  stats overlay
+--  stats overlay (honest fps/ping/mem)
 -- ============================================================
 local statsFrame = Instance.new("Frame")
-statsFrame.Size = UDim2.fromOffset(186, 24)
+statsFrame.Size = UDim2.fromOffset(220, 24)
 statsFrame.AnchorPoint = Vector2.new(0.5, 0)
 statsFrame.Position = UDim2.new(0.5, 0, 0, 10)
 statsFrame.BackgroundColor3 = Theme.bg
@@ -1487,7 +1774,11 @@ local function readPing()
     local ok, v = pcall(function()
         return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
     end)
-    if ok and type(v) == "number" then return math.floor(v) end
+    if ok and type(v) == "number" and v >= 0 then return math.floor(v) end
+    local ok2, v2 = pcall(function()
+        return math.floor(LP:GetNetworkPing() * 1000)
+    end)
+    if ok2 and type(v2) == "number" then return v2 end
     return nil
 end
 
@@ -1496,6 +1787,8 @@ local function readMemory()
         return Stats:GetTotalMemoryUsageMb()
     end)
     if ok and type(v) == "number" then return math.floor(v) end
+    local ok2, v2 = pcall(function() return math.floor(gcinfo() / 1024) end)
+    if ok2 and type(v2) == "number" then return v2 end
     return nil
 end
 
@@ -1527,7 +1820,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
---  runtime
+--  FOV circle
 -- ============================================================
 local fovCircle = nil
 if DrawingLib then
@@ -1543,15 +1836,23 @@ if DrawingLib then
     if ok then fovCircle = circle end
 end
 
+-- ============================================================
+--  runtime
+-- ============================================================
 local function frameStep(dt)
     if destroyed then return end
 
     statFrames = statFrames + 1
 
+    gradientAngle = (gradientAngle + dt * 90) % 360
+    mainGradient.Rotation = gradientAngle
+    reopenGradient.Rotation = gradientAngle
+
     if state.aimbot then aimStep(dt) end
     if state.triggerbot then triggerStep() end
     if state.fly then flyStep() end
-    if state.esp then espStep() end
+    if state.spin then spinStep(dt) end
+    if state.esp or next(espItems) or next(espHighlights) then espStep() end
 
     if fovCircle then
         local cam = workspace.CurrentCamera
@@ -1595,6 +1896,7 @@ local function isOverRect(x, y, obj)
     return x >= ap.X and x <= ap.X + asz.X and y >= ap.Y and y <= ap.Y + asz.Y
 end
 
+-- click TP with single inset handling (IgnoreGuiInset = false)
 local clickTpConn = UserInputService.InputBegan:Connect(function(input, processed)
     if destroyed or not state.clickTp or processed then return end
     if input.UserInputType ~= Enum.UserInputType.Touch
@@ -1608,8 +1910,7 @@ local clickTpConn = UserInputService.InputBegan:Connect(function(input, processe
     local cam = workspace.CurrentCamera
     if not cam then return end
 
-    local inset = GuiService:GetGuiInset()
-    local ray = cam:ViewportPointToRay(x - inset.X, y - inset.Y)
+    local ray = cam:ViewportPointToRay(x, y)
     local filter = {}
     local myChar = getChar()
     if myChar then table.insert(filter, myChar) end
@@ -1673,16 +1974,25 @@ end)
 task.spawn(function()
     while not destroyed do
         if state.noclip then
-            pcall(noclipOn)
+            pcall(noclipPass)
         elseif next(noclipSaved) then
-            noclipOff()
+            noclipRestore()
         end
-        if not state.esp and next(espItems) then
-            for _, item in pairs(espItems) do hideItem(item) end
-        end
-        task.wait(0.15)
+        task.wait(0.1)
     end
 end)
+
+-- rotation / viewport change
+local camConn = workspace.CurrentCamera and workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    pcall(layoutPanel)
+end)
+
+local function onViewportChanged()
+    pcall(layoutPanel)
+end
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(onViewportChanged)
+end
 
 -- ============================================================
 --  cleanup
@@ -1693,13 +2003,14 @@ destroy = function()
 
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
     for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn,
-        jumpConn, charConn, addedConn, removedConn }) do
-        pcall(function() conn:Disconnect() end)
+        jumpConn, charConn, addedConn, removedConn, camConn, bhopConn }) do
+        if conn then pcall(function() conn:Disconnect() end) end
     end
 
     pcall(function() if state.fly then setFly(false) end end)
+    pcall(function() if state.bhop then setBhop(false) end end)
     pcall(clearESP)
-    pcall(noclipOff)
+    pcall(noclipRestore)
     pcall(setFullbright, false)
     pcall(setFpsBoost, false)
     if fovCircle then pcall(function() fovCircle:Remove() end) end
@@ -1707,6 +2018,7 @@ destroy = function()
 
     state.esp = false
     state.noclip = false
+    state.spin = false
 
     if getgenv then getgenv().__Aero = nil end
 end
@@ -1718,7 +2030,13 @@ if getgenv then
         teleport = safeTeleport,
         rejoin = rejoin,
         serverHop = serverHop,
+        waypoints = waypoints,
+        saveWaypoint = saveWaypoint,
     }
 end
 
+layoutPanel()
 syncUI()
+refreshPlayerList()
+refreshWaypointList()
+showTab("move")
