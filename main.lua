@@ -1,20 +1,62 @@
 --[[
-    Aero v3.0 - Orion UI edition
+    Aero v3.1 - Orion UI edition + improved aimbot
     Tabs: MOVE / AIM / VIS / PLAY / WAY / SRV
-    Uses Orion UI Library. All features from v2.4 preserved.
-    Noclip reworked: per-part saved state, periodic pass,
-    restores only real changes, excludes HumanoidRootPart.
+    Orion source cascade: shlexware -> NoLag-id fork -> readfile("orion.lua")
+    Improved aimbot: visibility check, target priority, hitbox select,
+    gravity prediction, adaptive camera lerp, Scriptable guard.
 ]]
 
 -- ============================================================
---  Orion library
+--  Orion loader (cascade)
 -- ============================================================
-local OrionLib = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/shlexware/Orion/main/source"
-))()
+local function loadOrion()
+    local sources = {
+        "https://raw.githubusercontent.com/shlexware/Orion/main/source",
+        "https://raw.githubusercontent.com/NoLag-id/Orion/main/source",
+    }
 
--- если есть локальная копия — используй вместо верхней строки:
--- local OrionLib = loadstring(readfile("orion.lua"))()
+    -- 1. try remote URLs
+    for _, url in ipairs(sources) do
+        local ok, res = pcall(function()
+            local src = game:HttpGet(url, true)
+            if type(src) ~= "string" or #src < 2000 then
+                error("bad source: " .. tostring(src and #src or 0) .. " bytes")
+            end
+            return loadstring(src)()
+        end)
+        if ok and type(res) == "table" then
+            warn("[Aero] Orion loaded from " .. url)
+            return res
+        else
+            warn("[Aero] Orion source failed: " .. url .. " -> " .. tostring(res))
+        end
+    end
+
+    -- 2. try local file
+    if type(readfile) == "function" then
+        local ok, res = pcall(function()
+            local src = readfile("orion.lua")
+            if type(src) ~= "string" or #src < 2000 then
+                error("local orion.lua missing or too small")
+            end
+            return loadstring(src)()
+        end)
+        if ok and type(res) == "table" then
+            warn("[Aero] Orion loaded from local orion.lua")
+            return res
+        else
+            warn("[Aero] local Orion failed: " .. tostring(res))
+        end
+    end
+
+    return nil
+end
+
+local OrionLib = loadOrion()
+if not OrionLib then
+    warn("[Aero] could not load Orion. Put orion.lua next to the script, or replace the URL.")
+    return
+end
 
 -- ============================================================
 --  services
@@ -48,6 +90,11 @@ local state = {
     esp = false, espHealth = true, fullbright = false,
     stats = false, fpsBoost = false, bhop = false,
     spin = false, spinSpeed = 8, theme = "violet",
+    -- aimbot improvements
+    visibleCheck = false,
+    targetMode = "closest",   -- closest | lowhp | threat
+    hitbox = "head",          -- head | root | torso
+    aimPing = 0.12,
 }
 
 local destroyed = false
@@ -88,12 +135,7 @@ local function applyStats()
 end
 
 -- ============================================================
---  noclip (fixed)
---  * per-part: remember original CanCollide
---  * every 0.1s pass over current character descendants
---  * restore exactly what was changed
---  * HumanoidRootPart untouched
---  * does not fight other scripts that toggle CanCollide on/off
+--  noclip (per-part saved state, periodic pass, HRP excluded)
 -- ============================================================
 local noclipSaved = {}
 
@@ -108,10 +150,7 @@ end
 
 local function noclipPass()
     local c = getChar()
-    if not c then
-        noclipRestore()
-        return
-    end
+    if not c then noclipRestore() return end
     for _, p in ipairs(c:GetDescendants()) do
         if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
             if noclipSaved[p] == nil then
@@ -128,20 +167,10 @@ local function setNoclip(on)
     state.noclip = on
     if on then
         noclipPass()
-        OrionLib:MakeNotification({
-            Name = "Noclip",
-            Content = "enabled",
-            Image = "rbxassetid://4483345998",
-            Time = 3,
-        })
+        OrionLib:MakeNotification({ Name = "Noclip", Content = "enabled", Time = 3 })
     else
         noclipRestore()
-        OrionLib:MakeNotification({
-            Name = "Noclip",
-            Content = "disabled",
-            Image = "rbxassetid://4483345998",
-            Time = 3,
-        })
+        OrionLib:MakeNotification({ Name = "Noclip", Content = "disabled", Time = 3 })
     end
 end
 
@@ -444,46 +473,130 @@ local function serverHop()
 end
 
 -- ============================================================
---  aim / trigger (unchanged)
+--  AIMBOT (improved)
 -- ============================================================
+local aimState = { currentTarget = nil }
+
+local function hitboxPart(char)
+    if state.hitbox == "root" then
+        return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+    elseif state.hitbox == "torso" then
+        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+            or char:FindFirstChild("Head")
+    end
+    return char:FindFirstChild("Head")
+end
+
+local function isVisible(part, origin, filter)
+    if not part then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = filter
+    params.IgnoreWater = true
+    local dir = part.Position - origin
+    local hit = workspace:Raycast(origin, dir, params)
+    return hit == nil or hit.Instance:IsDescendantOf(part.Parent)
+end
+
+local function predictPosition(part, ping)
+    if not part then return nil end
+    local v = part.AssemblyLinearVelocity
+    local g = workspace.Gravity
+    local t = (ping or 0.12) + 0.02
+    local pos = part.Position + v * t
+    -- vertical drop correction; small because bullets are hitscan in most games
+    pos = pos + Vector3.new(0, -0.5 * g * t * t * 0.25, 0)
+    return pos
+end
+
+local function scoreTarget(head, hum, cam, center, mode)
+    local pos, onScreen = cam:WorldToViewportPoint(head.Position)
+    if not onScreen then return math.huge end
+    local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+    if mode == "lowhp" then
+        return hum.Health * 10 + dist * 0.05
+    elseif mode == "threat" then
+        return dist * 0.7 + hum.Health * 0.3
+    end
+    return dist
+end
+
 local function pickTarget(fov)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
     fov = fov or state.fov
     local center = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
-    local best, bestDist = nil, math.huge
+    local myChar = getChar()
+    local baseFilter = { myChar }
+    local best, bestScore = nil, math.huge
+
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LP then
             local c = plr.Character
             local head = c and c:FindFirstChild("Head")
-            local h = c and c:FindFirstChildOfClass("Humanoid")
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            local hb = c and hitboxPart(c)
+
             local skip = false
-            if state.teamCheck and plr.Team ~= nil and plr.Team == LP.Team then skip = true end
-            if head and h and h.Health > 0 and not skip then
-                local aimAt = head.Position
+            if state.teamCheck and plr.Team ~= nil and plr.Team == LP.Team then
+                skip = true
+            end
+
+            if head and hum and hb and hum.Health > 0 and not skip then
+                local aimAt = hb.Position
                 if state.predict then
-                    aimAt = aimAt + head.AssemblyLinearVelocity * 0.12
+                    aimAt = predictPosition(hb, state.aimPing)
                 end
+
                 local pos, onScreen = cam:WorldToViewportPoint(aimAt)
                 if onScreen then
                     local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-                    if d <= fov and d < bestDist then best, bestDist = aimAt, d end
+                    if d <= fov then
+                        local okVisible = true
+                        if state.visibleCheck then
+                            local filter = table.clone(baseFilter)
+                            table.insert(filter, c)
+                            okVisible = isVisible(hb, cam.CFrame.Position, filter)
+                        end
+                        if okVisible then
+                            local score = scoreTarget(hb, hum, cam, center, state.targetMode)
+                            if score < bestScore then
+                                best, bestScore = aimAt, score
+                            end
+                        end
+                    end
                 end
             end
         end
     end
     return best
 end
+
 local function aimStep(dt)
     if not state.aimbot then return end
     local cam = workspace.CurrentCamera
     if not cam then return end
+    -- don't fight server-controlled cameras
+    if cam.CameraType == Enum.CameraType.Scriptable then return end
+
     local target = pickTarget()
-    if not target then return end
+    if not target then
+        aimState.currentTarget = nil
+        return
+    end
+    aimState.currentTarget = target
+
     local goal = CFrame.lookAt(cam.CFrame.Position, target)
     local speed = 26 - 24 * state.smooth
-    cam.CFrame = cam.CFrame:Lerp(goal, clamp(dt * speed, 0, 1))
+
+    -- adaptive: bigger correction for larger angular error
+    local angle = math.acos(clamp(cam.CFrame.LookVector:Dot(goal.LookVector), -1, 1))
+    local adaptive = clamp(angle * 2 + 1, 1, 4)
+    local factor = clamp(dt * speed * adaptive, 0, 1)
+
+    cam.CFrame = cam.CFrame:Lerp(goal, factor)
 end
+
 local lastTrigger = 0
 local function fireWeapon()
     if type(mouse1click) == "function" then pcall(mouse1click) return true end
@@ -658,7 +771,7 @@ end
 --  Orion window
 -- ============================================================
 local Window = OrionLib:MakeWindow({
-    Name = "Aero v3.0",
+    Name = "Aero v3.1",
     HidePremium = false,
     SaveConfig = true,
     ConfigFolder = "AeroConfig",
@@ -713,17 +826,15 @@ MoveTab:AddToggle({
     Name = "Click TP", Default = false,
     Callback = function(v) state.clickTp = v end,
 })
-
--- fly pad: Orion не даёт hold-кнопок, поэтому через текстовые команды
 MoveTab:AddButton({
-    Name = "Fly up (hold not supported, click to jump)",
+    Name = "Fly up (tap)",
     Callback = function()
         flyInput.u = 1
         task.delay(0.15, function() flyInput.u = 0 end)
     end,
 })
 MoveTab:AddButton({
-    Name = "Fly down",
+    Name = "Fly down (tap)",
     Callback = function()
         flyInput.d = 1
         task.delay(0.15, function() flyInput.d = 0 end)
@@ -759,6 +870,29 @@ AimTab:AddToggle({
 AimTab:AddToggle({
     Name = "Prediction", Default = true,
     Callback = function(v) state.predict = v end,
+})
+AimTab:AddToggle({
+    Name = "Visibility check (anti-wall)",
+    Default = false,
+    Callback = function(v) state.visibleCheck = v end,
+})
+AimTab:AddDropdown({
+    Name = "Target priority",
+    Default = "closest",
+    Options = { "closest", "lowhp", "threat" },
+    Callback = function(v) state.targetMode = v end,
+})
+AimTab:AddDropdown({
+    Name = "Hitbox",
+    Default = "head",
+    Options = { "head", "root", "torso" },
+    Callback = function(v) state.hitbox = v end,
+})
+AimTab:AddSlider({
+    Name = "Prediction ping (s)",
+    Min = 0, Max = 0.5, Default = 0.12, Color = Color3.fromRGB(124, 92, 255),
+    Increment = 0.01, ValueName = "s",
+    Callback = function(v) state.aimPing = v end,
 })
 AimTab:AddToggle({
     Name = "Triggerbot", Default = false,
@@ -830,24 +964,20 @@ VisTab:AddDropdown({
 -- ============================================================
 local PlayTab = Window:MakeTab({ Name = "Players", Icon = "rbxassetid://4483345998", PremiumOnly = false })
 
-local playerDropdownOptions = {}
-local function refreshPlayerDropdown()
-    playerDropdownOptions = {}
+local function playerOptions()
+    local o = {}
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            table.insert(playerDropdownOptions, plr.Name)
-        end
+        if plr ~= LP then table.insert(o, plr.Name) end
     end
-    return playerDropdownOptions
+    return o
 end
 
 local PlayerDropdown = PlayTab:AddDropdown({
     Name = "Player",
     Default = "",
-    Options = refreshPlayerDropdown(),
+    Options = playerOptions(),
     Callback = function(v) end,
 })
-
 PlayTab:AddButton({
     Name = "Teleport to selected player",
     Callback = function()
@@ -872,7 +1002,7 @@ PlayTab:AddButton({
 PlayTab:AddButton({
     Name = "Refresh player list",
     Callback = function()
-        PlayerDropdown:Refresh(refreshPlayerDropdown())
+        PlayerDropdown:Refresh(playerOptions())
         OrionLib:MakeNotification({ Name = "Players", Content = "refreshed", Time = 3 })
     end,
 })
@@ -881,9 +1011,7 @@ PlayTab:AddButton({
     Callback = function()
         local ok, err = rejoin()
         OrionLib:MakeNotification({
-            Name = "Rejoin",
-            Content = ok and "rejoining..." or tostring(err),
-            Time = 3,
+            Name = "Rejoin", Content = ok and "rejoining..." or tostring(err), Time = 3,
         })
     end,
 })
@@ -903,29 +1031,24 @@ PlayTab:AddButton({
 -- ============================================================
 local WayTab = Window:MakeTab({ Name = "Waypoints", Icon = "rbxassetid://4483345998", PremiumOnly = false })
 
-local waypointDropdown = WayTab:AddDropdown({
-    Name = "Saved waypoints",
-    Default = "",
-    Options = (function()
-        local o = {}
-        for n in pairs(waypoints) do table.insert(o, n) end
-        return o
-    end)(),
-    Callback = function(v) end,
-})
-
-local function refreshWaypointDropdown()
+local function waypointOptions()
     local o = {}
     for n in pairs(waypoints) do table.insert(o, n) end
-    waypointDropdown:Refresh(o)
+    return o
 end
 
+local WaypointDropdown = WayTab:AddDropdown({
+    Name = "Saved waypoints",
+    Default = "",
+    Options = waypointOptions(),
+    Callback = function(v) end,
+})
 WayTab:AddButton({
     Name = "Save current position",
     Callback = function()
         local name, err = saveWaypoint()
         if name then
-            refreshWaypointDropdown()
+            WaypointDropdown:Refresh(waypointOptions())
             OrionLib:MakeNotification({ Name = "Waypoint", Content = "saved " .. name, Time = 3 })
         else
             OrionLib:MakeNotification({ Name = "Waypoint", Content = tostring(err), Time = 3 })
@@ -935,7 +1058,7 @@ WayTab:AddButton({
 WayTab:AddButton({
     Name = "Teleport to selected waypoint",
     Callback = function()
-        local sel = waypointDropdown.Value
+        local sel = WaypointDropdown.Value
         if not sel or sel == "" then
             OrionLib:MakeNotification({ Name = "Waypoint", Content = "nothing selected", Time = 3 })
             return
@@ -951,10 +1074,10 @@ WayTab:AddButton({
 WayTab:AddButton({
     Name = "Delete selected waypoint",
     Callback = function()
-        local sel = waypointDropdown.Value
+        local sel = WaypointDropdown.Value
         if not sel or sel == "" then return end
         deleteWaypoint(sel)
-        refreshWaypointDropdown()
+        WaypointDropdown:Refresh(waypointOptions())
         OrionLib:MakeNotification({ Name = "Waypoint", Content = "deleted " .. sel, Time = 3 })
     end,
 })
@@ -965,7 +1088,6 @@ WayTab:AddButton({
 local SrvTab = Window:MakeTab({ Name = "Server", Icon = "rbxassetid://4483345998", PremiumOnly = false })
 
 local sessionStart = os.clock()
-
 local function pingMs()
     local ok, v = pcall(function()
         return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
@@ -983,10 +1105,7 @@ local function readMemory()
     return nil
 end
 
-local srvParagraph = SrvTab:AddParagraph({
-    Title = "Server info",
-    Content = "loading...",
-})
+local srvParagraph = SrvTab:AddParagraph({ Title = "Server info", Content = "loading..." })
 
 local function refreshServerInfo()
     local lines = {}
@@ -1003,7 +1122,7 @@ local function refreshServerInfo()
         math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60))
     table.insert(lines, "Streaming: " .. tostring(workspace.StreamingEnabled))
     table.insert(lines, "Gravity: " .. string.format("%.0f", workspace.Gravity))
-    srvParagraph:Set(lines and table.concat(lines, "\n") or "no data")
+    srvParagraph:Set(table.concat(lines, "\n"))
 end
 refreshServerInfo()
 
@@ -1026,9 +1145,7 @@ SrvTab:AddButton({
         if type(setclipboard) == "function" then ok = pcall(setclipboard, jid) end
         if not ok and type(toclipboard) == "function" then ok = pcall(toclipboard, jid) end
         OrionLib:MakeNotification({
-            Name = "JobId",
-            Content = ok and "copied" or "clipboard unavailable",
-            Time = 3,
+            Name = "JobId", Content = ok and "copied" or "clipboard unavailable", Time = 3,
         })
     end,
 })
@@ -1041,7 +1158,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
---  stats overlay (custom ScreenGui, Orion не даёт оверлеев)
+--  stats overlay (custom ScreenGui)
 -- ============================================================
 local overlayGui = Instance.new("ScreenGui")
 overlayGui.Name = "AeroStats"
@@ -1120,7 +1237,6 @@ local bound = pcall(function()
 end)
 if not bound then RunService.RenderStepped:Connect(frameStep) end
 
--- stats loop
 task.spawn(function()
     while not destroyed do
         local now = os.clock()
@@ -1145,7 +1261,6 @@ end)
 
 -- click TP
 local function isOverOrion(x, y)
-    -- Orion рисует свой ScreenGui; грубая проверка через GuiService
     local gui = GuiService:GetGuiObjectsAtPosition(x, y)
     if not gui then return false end
     for _, obj in ipairs(gui) do
@@ -1215,7 +1330,7 @@ task.spawn(function()
     end
 end)
 
--- noclip loop (fixed): 0.1s, restores only what was changed
+-- noclip loop (fixed)
 task.spawn(function()
     while not destroyed do
         if state.noclip then
