@@ -1,26 +1,57 @@
 --[[
-    Aero v2.8.4 - Delta Safe Startup
+    Aero v2.8.7 - Final Stable
+    - Safe service loading (No HttpService dependency).
+    - Safe JSON wrappers.
+    - Fixed wait/spawn for Delta.
 ]]
 
-if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
-    pcall(getgenv().__Aero.destroy)
+pcall(function()
+    local env = getgenv or getrenv
+    if env then
+        local genv = env()
+        if genv and genv.__Aero and genv.__Aero.destroy then
+            genv.__Aero.destroy()
+        end
+    end
+end)
+
+local function getSafeService(name)
+    local ok, srv = pcall(function() return game:GetService(name) end)
+    if ok and srv then return srv end
+    return game:FindFirstChildOfClass(name)
 end
 
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Lighting         = game:GetService("Lighting")
-local TeleportService  = game:GetService("TeleportService")
-local HttpService      = game:GetService("HttpService")
-local Stats            = game:GetService("Stats")
-local GuiService       = game:GetService("GuiService")
-local TweenService     = game:GetService("TweenService")
-local SoundService     = game:GetService("SoundService")
+local Players          = getSafeService("Players")
+local RunService       = getSafeService("RunService")
+local UserInputService = getSafeService("UserInputService")
+local Lighting         = getSafeService("Lighting")
+local TeleportService  = getSafeService("TeleportService")
+local HttpService      = getSafeService("HttpService")
+local Stats            = getSafeService("Stats")
+local GuiService       = getSafeService("GuiService")
+local TweenService     = getSafeService("TweenService")
+local SoundService     = getSafeService("SoundService")
 
-local LP = Players.LocalPlayer
+local LP = Players and Players.LocalPlayer
 if not LP then return end
 
--- Универсальные обертки (не используют warn)
+local wait = wait or (task and task.wait) or function(t) local n = tick() + (t or 0); while tick() < n do end end
+local spawn = spawn or (task and task.spawn) or function(f) coroutine.wrap(f)() end
+
+local function safeJSONDecode(str)
+    if not HttpService then return nil end
+    local ok, res = pcall(function() return HttpService:JSONDecode(str) end)
+    if ok then return res end
+    return nil
+end
+
+local function safeJSONEncode(tbl)
+    if not HttpService then return nil end
+    local ok, res = pcall(function() return HttpService:JSONEncode(tbl) end)
+    if ok then return res end
+    return nil
+end
+
 local function safeReadFile(path)
     if type(readfile) == "function" then
         local ok, res = pcall(readfile, path)
@@ -35,6 +66,10 @@ local function safeWriteFile(path, content)
         if ok then return true end
     end
     return false
+end
+
+local function getGuiParent()
+    return LP:WaitForChild("PlayerGui")
 end
 
 local DrawingLib = nil
@@ -70,11 +105,6 @@ local function clamp(v, a, b)
     if v < a then return a end
     if v > b then return b end
     return v
-end
-
--- Безопасная проверка интерфейса (без gethui)
-local function getGuiParent()
-    return LP:WaitForChild("PlayerGui")
 end
 
 -- ============================================================
@@ -259,8 +289,12 @@ end
 -- ============================================================
 --  waypoints
 -- ============================================================
-local waypoints = (getgenv and getgenv().__AeroWaypoints) or {}
-if getgenv then getgenv().__AeroWaypoints = waypoints end
+local waypoints = {}
+pcall(function()
+    local env = getgenv or getrenv
+    if env and env().__AeroWaypoints then waypoints = env().__AeroWaypoints end
+    if env then env().__AeroWaypoints = waypoints end
+end)
 local function saveWaypoint()
     local root = getHRP(); if not root then return nil, "no root" end
     local p = root.Position
@@ -299,8 +333,8 @@ local function serverHop()
             return game:HttpGet(url, true, { ["User-Agent"] = "Roblox/WinInet", ["Accept"] = "application/json" })
         end)
         if ok and type(body) == "string" then
-            local decoded, parsed = pcall(function() return HttpService:JSONDecode(body) end)
-            if decoded and type(parsed) == "table" and parsed.data then data = parsed; break
+            local parsed = safeJSONDecode(body)
+            if parsed and type(parsed) == "table" and parsed.data then data = parsed; break
             else lastErr = "bad json" end
         else lastErr = "http " .. tostring(body) end
     end
@@ -369,7 +403,7 @@ local function pickTarget(fov)
                     if d <= fov then
                         local okVisible = true
                         if state.visibleCheck then
-                            local filter = table.clone(baseFilter); table.insert(filter, c)
+                            local filter = {}; for _, v in ipairs(baseFilter) do table.insert(filter, v) end; table.insert(filter, c)
                             okVisible = isVisible(hb, cam.CFrame.Position, filter)
                         end
                         if okVisible then
@@ -525,6 +559,7 @@ local toastOrder = 0; local toastActive = {}
 local TOAST_COLORS = { info = Color3.fromRGB(86, 200, 255), ok = Color3.fromRGB(80, 235, 130), warn = Color3.fromRGB(255, 180, 70), err = Color3.fromRGB(235, 70, 90) }
 
 local function playNotifySound(kind)
+    if not SoundService then return end
     local s = Instance.new("Sound")
     s.Volume = 0.3
     if kind == "err" then s.SoundId = "rbxassetid://6739879750"
@@ -547,14 +582,16 @@ notify = function(text, kind, duration)
     local bar = Instance.new("Frame"); bar.Size = UDim2.new(0, 3, 1, -10); bar.Position = UDim2.new(0, 6, 0, 5); bar.BackgroundColor3 = accent; bar.BorderSizePixel = 0; bar.ZIndex = 52; bar.Parent = frame; corner(bar, 2)
     local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1, -20, 1, 0); lbl.Position = UDim2.new(0, 14, 0, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 12; lbl.TextColor3 = Theme.text; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextTruncate = Enum.TextTruncate.AtEnd; lbl.Text = text; lbl.TextTransparency = 1; lbl.ZIndex = 52; lbl.Parent = frame
     table.insert(toastActive, frame)
-    TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.05 }):Play()
-    TweenService:Create(stroke, TweenInfo.new(0.18), { Transparency = 0.1 }):Play()
-    TweenService:Create(lbl, TweenInfo.new(0.18), { TextTransparency = 0 }):Play()
+    safeTween(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.05 })
+    safeTween(stroke, TweenInfo.new(0.18), { Transparency = 0.1 })
+    safeTween(lbl, TweenInfo.new(0.18), { TextTransparency = 0 })
     spawn(function()
         wait(duration)
         if not frame or not frame.Parent then return end
-        TweenService:Create(frame, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play(); TweenService:Create(lbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.25), { Transparency = 1 }):Play(); TweenService:Create(bar, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+        safeTween(frame, TweenInfo.new(0.25), { BackgroundTransparency = 1 })
+        safeTween(lbl, TweenInfo.new(0.25), { TextTransparency = 1 })
+        safeTween(stroke, TweenInfo.new(0.25), { Transparency = 1 })
+        safeTween(bar, TweenInfo.new(0.25), { BackgroundTransparency = 1 })
         wait(0.28)
         if frame and frame.Parent then
             local idx = nil; for i, t in ipairs(toastActive) do if t == frame then idx = i break end end
@@ -608,11 +645,11 @@ spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteS
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8.3"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8.7"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
-    b.MouseButton1Click:Connect(function() local ok, err = pcall(onClick); if not ok then warn("[Aero] " .. tostring(err)) end end); return b
+    b.MouseButton1Click:Connect(function() local ok, err = pcall(onClick); end); return b
 end
 headerButton("_", -70, function() main.Visible = false end)
 headerButton("x", -36, function() if destroy then destroy() end end)
@@ -702,7 +739,7 @@ local function makeSwitch(parent, text, get, set)
     local knob = Instance.new("Frame"); knob.Size = UDim2.fromOffset(15, 15); knob.Position = UDim2.fromOffset(3, 3); knob.BackgroundColor3 = Color3.fromRGB(225, 225, 236); knob.BorderSizePixel = 0; knob.Parent = pill; corner(knob, 8)
     local hit = Instance.new("TextButton"); hit.Size = UDim2.fromOffset(58, 42); hit.Position = UDim2.new(1, -58, 0, 0); hit.BackgroundTransparency = 1; hit.Text = ""; hit.Parent = row
     local function refresh() local on = get(); pill.BackgroundColor3 = on and Theme.accent or Theme.line; knob.Position = on and UDim2.fromOffset(20, 3) or UDim2.fromOffset(3, 3) end
-    hit.MouseButton1Click:Connect(function() local ok, err = pcall(function() set(not get()) end); if not ok then warn("[Aero] " .. tostring(err)) end; refresh() end)
+    hit.MouseButton1Click:Connect(function() local ok, err = pcall(function() set(not get()) end); refresh() end)
     refresh(); table.insert(uiRefreshers, refresh); return row
 end
 
@@ -724,7 +761,7 @@ end
 
 local function makeButton(parent, text, onClick, accent)
     local b = Instance.new("TextButton"); b.Size = UDim2.new(1, 0, 0, 34); b.BackgroundColor3 = accent and Theme.accent or Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 12; b.TextColor3 = accent and Color3.fromRGB(255, 255, 255) or Theme.text; b.Text = text; b.LayoutOrder = nextOrder(); b.Parent = parent; corner(b, 9)
-    b.MouseButton1Click:Connect(function() local ok, err = pcall(onClick, b); if not ok then warn("[Aero] " .. tostring(err)) end end); return b
+    b.MouseButton1Click:Connect(function() local ok, err = pcall(onClick, b); end); return b
 end
 
 local function makeHold(parent, text, onDown, onUp, layoutOrder)
@@ -761,13 +798,10 @@ end
 
 -- config system
 local function saveConfig()
-    local cfg = {
-        state = state,
-        waypoints = {}
-    }
+    local cfg = { state = state, waypoints = {} }
     for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
-    local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
-    if ok then
+    local encoded = safeJSONEncode(cfg)
+    if encoded then
         local wOk = safeWriteFile("AeroConfig.json", encoded)
         if wOk then notify("config saved", "ok") else notify("save failed (no writefile)", "err") end
     else notify("encode failed", "err") end
@@ -776,8 +810,8 @@ end
 local function loadConfig()
     local content = safeReadFile("AeroConfig.json")
     if not content then notify("config not found", "warn") return end
-    local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
-    if dOk and type(cfg) == "table" then
+    local cfg = safeJSONDecode(content)
+    if cfg and type(cfg) == "table" then
         if cfg.state then
             for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
         end
@@ -1056,12 +1090,19 @@ destroy = function()
     pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(clearESP); pcall(setFullbright, false); pcall(setFpsBoost, false)
     if fovCircle then pcall(function() fovCircle:Remove() end) end; pcall(function() gui:Destroy() end)
     state.esp = false; state.spin = false
-    if getgenv then getgenv().__Aero = nil end
+    pcall(function()
+        local env = getgenv or getrenv
+        if env then env().__Aero = nil end
+    end)
 end
 
-if getgenv then
-    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
-end
+pcall(function()
+    local env = getgenv or getrenv
+    if env then
+        local genv = env()
+        genv.__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
+    end
+end)
 
 pcall(function()
     applyTheme(state.theme)
