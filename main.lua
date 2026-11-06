@@ -1,39 +1,26 @@
 --[[
-    Aero v2.7.2 - Configs Returned, FOV Color Removed
-    - Safe Config system (from 2.7).
-    - Removed FOV Color Picker.
-    - Includes ESP Tool Info, Improved FPS Booster, Speed Presets.
-    - No Server Hop.
+    Aero v2.7.1 - Stable Custom UI (No HTTP/Configs)
+    - Improved FPS Booster (deletes decals/textures, disables post-effects).
+    - Added Speed Presets on MOVE tab.
+    - Added ESP Tool Info (shows target's weapon).
+    - Removed: Server Hop, Save/Load Config, Noclip.
 ]]
 
-pcall(function()
-    local env = getgenv or getrenv
-    if env then
-        local genv = env()
-        if genv and genv.__Aero and genv.__Aero.destroy then
-            genv.__Aero.destroy()
-        end
-    end
-end)
-
-local function getSafeService(name)
-    local ok, srv = pcall(function() return game:GetService(name) end)
-    if ok and srv then return srv end
-    return game:FindFirstChildOfClass(name)
+if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
+    pcall(getgenv().__Aero.destroy)
 end
 
-local Players          = getSafeService("Players")
-local RunService       = getSafeService("RunService")
-local UserInputService = getSafeService("UserInputService")
-local Lighting         = getSafeService("Lighting")
-local TeleportService  = getSafeService("TeleportService")
-local HttpService      = getSafeService("HttpService")
-local Stats            = getSafeService("Stats")
-local GuiService       = getSafeService("GuiService")
-local TweenService     = getSafeService("TweenService")
-local SoundService     = getSafeService("SoundService")
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting         = game:GetService("Lighting")
+local TeleportService  = game:GetService("TeleportService")
+local Stats            = game:GetService("Stats")
+local GuiService       = game:GetService("GuiService")
+local TweenService     = game:GetService("TweenService")
+local SoundService     = game:GetService("SoundService")
 
-local LP = Players and Players.LocalPlayer
+local LP = Players.LocalPlayer
 if not LP then return end
 
 local DrawingLib = nil
@@ -49,7 +36,7 @@ local state = {
     predict = true, triggerbot = false, triggerFov = 45,
     esp = false, espHealth = true, fullbright = false,
     stats = false, fpsBoost = false, bhop = false,
-    spin = false, spinSpeed = 8, theme = "violet",
+    spin = false, spinSpeed = 8, theme = "violet", fovColor = "theme",
     visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.05,
 }
 
@@ -574,7 +561,7 @@ task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.Abso
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.2"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.1"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -720,37 +707,9 @@ local function applyTheme(name)
         updateIridescentGradient(mainGlowGradient, Theme.neonB)
         updateIridescentGradient(reopenGradient, Theme.neonA)
         updateIridescentGradient(reopenGlowGradient, Theme.neonB)
-        if fovCircle then fovCircle.Color = Theme.accent end
+        if fovCircle and state.fovColor == "theme" then fovCircle.Color = Theme.accent end
     end)
     pcall(refreshTabStyles); pcall(syncUI); if notify then notify("theme: " .. name, "ok") end
-end
-
--- config system
-local function saveConfig()
-    local cfg = { state = state, waypoints = {} }
-    for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
-    local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
-    if ok then
-        local wOk = pcall(function() writefile("AeroConfig.json", encoded) end)
-        if wOk then notify("config saved", "ok") else notify("save failed (no writefile)", "err") end
-    else notify("encode failed", "err") end
-end
-
-local function loadConfig()
-    local rOk, content = pcall(function() return readfile("AeroConfig.json") end)
-    if not rOk or not content then notify("config not found", "warn") return end
-    local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
-    if dOk and type(cfg) == "table" then
-        if cfg.state then
-            for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
-        end
-        if cfg.waypoints then
-            for k in pairs(waypoints) do waypoints[k] = nil end
-            for k, v in pairs(cfg.waypoints) do waypoints[k] = Vector3.new(v.x, v.y, v.z) end
-        end
-        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList(); refreshThemeButtons()
-        notify("config loaded", "ok")
-    else notify("decode failed", "err") end
 end
 
 -- MOVE
@@ -803,6 +762,25 @@ makeSlider(aimTab, "Trigger FOV", 5, 300, 5, function() return state.triggerFov 
 makeDropdown(aimTab, "Target Priority", {"closest", "lowhp", "threat"}, function() return state.targetMode end, function(v) state.targetMode = v end)
 makeDropdown(aimTab, "Hitbox", {"head", "root", "torso"}, function() return state.hitbox end, function(v) state.hitbox = v end)
 
+local fovColors = { "theme", "cyan", "red", "green", "yellow", "white" }
+local fovColorIdx = 1
+local fovBtn = makeButton(aimTab, "FOV Color: " .. fovColors[fovColorIdx], function(b)
+    fovColorIdx = fovColorIdx + 1
+    if fovColorIdx > #fovColors then fovColorIdx = 1 end
+    local c = fovColors[fovColorIdx]
+    state.fovColor = c
+    b.Text = "FOV Color: " .. c
+    if fovCircle then
+        if c == "theme" then fovCircle.Color = Theme.accent
+        elseif c == "cyan" then fovCircle.Color = Color3.fromRGB(86, 200, 255)
+        elseif c == "red" then fovCircle.Color = Color3.fromRGB(235, 70, 90)
+        elseif c == "green" then fovCircle.Color = Color3.fromRGB(60, 220, 120)
+        elseif c == "yellow" then fovCircle.Color = Color3.fromRGB(255, 220, 80)
+        elseif c == "white" then fovCircle.Color = Color3.fromRGB(255, 255, 255)
+        end
+    end
+end, false)
+
 -- VIS
 local visTab = newTab("vis")
 makeSwitch(visTab, "ESP", function() return state.esp end, function(v) state.esp = v; if not v then clearESP() end; notify("esp " .. (v and "on" or "off"), v and "ok" or "info") end)
@@ -824,9 +802,6 @@ for i, name in ipairs(themeNames) do
     b.MouseButton1Click:Connect(function() applyTheme(name); refreshThemeButtons() end); themeButtons[name] = b
 end
 refreshThemeButtons()
-
-local configSaveBtn = makeButton(visTab, "Save Config", saveConfig, true); configSaveBtn.LayoutOrder = nextOrder()
-local configLoadBtn = makeButton(visTab, "Load Config", loadConfig, false); configLoadBtn.LayoutOrder = nextOrder()
 
 -- PLAY
 local playersTab = newTab("players")
@@ -1003,7 +978,7 @@ destroy = function()
 end
 
 if getgenv then
-    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
+    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo }
 end
 
 applyTheme(state.theme)
