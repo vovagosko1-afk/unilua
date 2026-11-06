@@ -1,9 +1,8 @@
 --[[
-    Aero v2.2 - mobile executor UI for Delta (Android)
-    Tabs: MOVE / AIM / VIS / PLAY / WAY
-    Changes: noclip fix, waypoints, bhop, spinbot, neon frame,
-             floating button text, honest FPS/ping overlay,
-             click-TP inset fix, screen rotation handling.
+    Aero v2.3 - mobile executor UI for Delta (Android)
+    Tabs: MOVE / AIM / VIS / PLAY / WAY / SRV
+    Fixes: floating button visibility, click-TP inset, noclip,
+           ESP cleanup, FPS/ping overlay, viewport rotation.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -84,8 +83,7 @@ local function applyStats()
 end
 
 -- ============================================================
---  noclip (fixed)
---  per-part saved value; periodic pass; restores real state
+--  noclip
 -- ============================================================
 local noclipSaved = {}
 
@@ -221,7 +219,7 @@ local function setBhop(on)
 end
 
 -- ============================================================
---  spinbot (does not touch aimbot)
+--  spinbot
 -- ============================================================
 local spinAngle = 0
 
@@ -269,7 +267,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster (fixed: preserves original QualityLevel)
+--  fps booster
 -- ============================================================
 local boostState = nil
 
@@ -459,7 +457,7 @@ local function serverHop()
 end
 
 -- ============================================================
---  aim / trigger  (unchanged from v2.1)
+--  aim / trigger  (unchanged)
 -- ============================================================
 local function pickTarget(fov)
     local cam = workspace.CurrentCamera
@@ -544,7 +542,7 @@ local function triggerStep()
 end
 
 -- ============================================================
---  ESP (Drawing primary, Highlight fallback)
+--  ESP
 -- ============================================================
 local espItems = {}
 local espHighlights = {}
@@ -652,7 +650,6 @@ local function espStep()
                 seen[plr] = true
                 local color = espColor(plr, hum)
 
-                -- highlight fallback (always on, works when Drawing missing)
                 local hl = espHighlights[plr]
                 if not hl or not hl.Parent then
                     hl = Instance.new("Highlight")
@@ -668,7 +665,6 @@ local function espStep()
                 hl.OutlineColor = color
                 hl.Enabled = true
 
-                -- drawing boxes
                 if DrawingLib then
                     local item = espItems[plr]
                     if not item then
@@ -770,7 +766,7 @@ local destroy
 local gui = Instance.new("ScreenGui")
 gui.Name = "Aero"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
+gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.DisplayOrder = 1000
 gui.Parent = resolveGuiParent()
@@ -811,6 +807,36 @@ mainGradient.Color = ColorSequence.new(Theme.neonA, Theme.neonB)
 mainGradient.Parent = mainStroke
 
 local gradientAngle = 0
+
+-- floating toggle: created with size/pos BEFORE layoutPanel runs
+local reopen = Instance.new("TextButton")
+reopen.Size = UDim2.fromOffset(64, 64)
+reopen.Position = UDim2.new(0, 10, 0, 96)
+reopen.BackgroundColor3 = Theme.bg
+reopen.BorderSizePixel = 0
+reopen.Font = Enum.Font.GothamBold
+reopen.TextSize = 12
+reopen.TextColor3 = Theme.accent2
+reopen.Text = "aero"
+reopen.AutoButtonColor = false
+reopen.Parent = gui
+corner(reopen, 32)
+
+local reopenStroke = Instance.new("UIStroke")
+reopenStroke.Color = Theme.neonA
+reopenStroke.Thickness = 1.5
+reopenStroke.Transparency = 0.2
+reopenStroke.Parent = reopen
+
+local reopenGradient = Instance.new("UIGradient")
+reopenGradient.Color = ColorSequence.new(Theme.neonA, Theme.neonB)
+reopenGradient.Parent = reopenStroke
+
+local reopenStroke2 = Instance.new("UIStroke")
+reopenStroke2.Color = Theme.neonB
+reopenStroke2.Thickness = 3
+reopenStroke2.Transparency = 0.75
+reopenStroke2.Parent = reopen
 
 local function layoutPanel()
     local vp = viewport()
@@ -918,6 +944,7 @@ local tabButtons = {}
 local activeTab = nil
 local refreshPlayerList
 local refreshWaypointList
+local refreshServerInfo
 
 local function newTab(id)
     local sf = Instance.new("ScrollingFrame")
@@ -965,6 +992,9 @@ local function showTab(id)
     if id == "way" and refreshWaypointList then
         pcall(refreshWaypointList)
     end
+    if id == "srv" and refreshServerInfo then
+        pcall(refreshServerInfo)
+    end
 end
 
 local tabDefs = {
@@ -973,18 +1003,19 @@ local tabDefs = {
     { "vis", "VIS" },
     { "players", "PLAY" },
     { "way", "WAY" },
+    { "srv", "SRV" },
 }
 
 local tabN = #tabDefs
 for i, def in ipairs(tabDefs) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1 / tabN, -6, 0, 34)
-    b.Position = UDim2.new((i - 1) / tabN, 3, 0, 6)
+    b.Size = UDim2.new(1 / tabN, -4, 0, 34)
+    b.Position = UDim2.new((i - 1) / tabN, 2, 0, 6)
     b.BackgroundColor3 = Theme.cardHi
     b.BackgroundTransparency = 0.55
     b.BorderSizePixel = 0
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 10
+    b.TextSize = 9
     b.TextColor3 = Theme.dim
     b.Text = def[2]
     b.Parent = tabBar
@@ -994,34 +1025,6 @@ for i, def in ipairs(tabDefs) do
     end)
     tabButtons[def[1]] = b
 end
-
--- floating toggle with "aero" text
-local reopen = Instance.new("TextButton")
-reopen.BackgroundColor3 = Theme.bg
-reopen.BorderSizePixel = 0
-reopen.Font = Enum.Font.GothamBold
-reopen.TextSize = 12
-reopen.TextColor3 = Theme.accent2
-reopen.Text = "aero"
-reopen.AutoButtonColor = false
-reopen.Parent = gui
-corner(reopen, 30)
-
-local reopenStroke = Instance.new("UIStroke")
-reopenStroke.Color = Theme.neonA
-reopenStroke.Thickness = 1.5
-reopenStroke.Transparency = 0.2
-reopenStroke.Parent = reopen
-
-local reopenGradient = Instance.new("UIGradient")
-reopenGradient.Color = ColorSequence.new(Theme.neonA, Theme.neonB)
-reopenGradient.Parent = reopenStroke
-
-local reopenStroke2 = Instance.new("UIStroke")
-reopenStroke2.Color = Theme.neonB
-reopenStroke2.Thickness = 3
-reopenStroke2.Transparency = 0.75
-reopenStroke2.Parent = reopen
 
 -- ============================================================
 --  drag
@@ -1738,7 +1741,176 @@ local refreshWayBtn = makeButton(wayTab, "Refresh list", refreshWaypointList, fa
 refreshWayBtn.LayoutOrder = 4
 
 -- ============================================================
---  stats overlay (honest fps/ping/mem)
+--  tabs: SRV
+-- ============================================================
+local srvTab = newTab("srv")
+
+local srvStatus = Instance.new("TextLabel")
+srvStatus.Size = UDim2.new(1, 0, 0, 14)
+srvStatus.BackgroundTransparency = 1
+srvStatus.Font = Enum.Font.GothamMedium
+srvStatus.TextSize = 10
+srvStatus.TextColor3 = Theme.dim
+srvStatus.TextXAlignment = Enum.TextXAlignment.Left
+srvStatus.Text = ""
+srvStatus.LayoutOrder = 1
+srvStatus.Parent = srvTab
+
+local srvBox = Instance.new("Frame")
+srvBox.Size = UDim2.new(1, 0, 0, 0)
+srvBox.AutomaticSize = Enum.AutomaticSize.Y
+srvBox.BackgroundTransparency = 1
+srvBox.LayoutOrder = 2
+srvBox.Parent = srvTab
+
+local srvLayout = Instance.new("UIListLayout")
+srvLayout.Padding = UDim.new(0, 4)
+srvLayout.SortOrder = Enum.SortOrder.LayoutOrder
+srvLayout.Parent = srvBox
+
+local sessionStart = os.clock()
+
+local function pingMs()
+    local ok, v = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and type(v) == "number" and v >= 0 then return math.floor(v) end
+    local ok2, v2 = pcall(function()
+        return math.floor(LP:GetNetworkPing() * 1000)
+    end)
+    if ok2 and type(v2) == "number" then return v2 end
+    return nil
+end
+
+local function readMemory()
+    local ok, v = pcall(function()
+        return Stats:GetTotalMemoryUsageMb()
+    end)
+    if ok and type(v) == "number" then return math.floor(v) end
+    local ok2, v2 = pcall(function() return math.floor(gcinfo() / 1024) end)
+    if ok2 and type(v2) == "number" then return v2 end
+    return nil
+end
+
+local function serverRow(key, valueFn, layoutOrder)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 30)
+    row.BackgroundColor3 = Theme.card
+    row.BorderSizePixel = 0
+    row.LayoutOrder = layoutOrder
+    row.Parent = srvBox
+    corner(row, 8)
+
+    local k = Instance.new("TextLabel")
+    k.Size = UDim2.new(0.42, 0, 1, 0)
+    k.Position = UDim2.fromOffset(10, 0)
+    k.BackgroundTransparency = 1
+    k.Font = Enum.Font.GothamMedium
+    k.TextSize = 11
+    k.TextColor3 = Theme.dim
+    k.TextXAlignment = Enum.TextXAlignment.Left
+    k.Text = key
+    k.Parent = row
+
+    local v = Instance.new("TextLabel")
+    v.Size = UDim2.new(0.58, -10, 1, 0)
+    v.Position = UDim2.new(0.42, 0, 0, 0)
+    v.BackgroundTransparency = 1
+    v.Font = Enum.Font.GothamBold
+    v.TextSize = 11
+    v.TextColor3 = Theme.text
+    v.TextXAlignment = Enum.TextXAlignment.Right
+    v.TextTruncate = Enum.TextTruncate.AtEnd
+    v.Text = tostring(valueFn())
+    v.Parent = row
+
+    return v, row
+end
+
+local jobIdLbl = serverRow("JobId", function() return game.JobId ~= "" and game.JobId or "(private)" end, 1)
+local placeIdLbl = serverRow("PlaceId", function() return tostring(game.PlaceId) end, 2)
+local versionLbl = serverRow("PlaceVersion", function() return tostring(game.PlaceVersion) end, 3)
+local playersLbl = serverRow("Players", function()
+    return string.format("%d / %d", #Players:GetPlayers(), Players.MaxPlayers)
+end, 4)
+local pingLbl = serverRow("Ping", function()
+    local p = pingMs()
+    return p and (tostring(p) .. " ms") or "--"
+end, 5)
+local memLbl = serverRow("Memory", function()
+    local m = readMemory()
+    return m and (tostring(m) .. " MB") or "--"
+end, 6)
+local uptimeLbl = serverRow("Session uptime", function()
+    local s = math.floor(os.clock() - sessionStart)
+    return string.format("%02d:%02d:%02d", math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60)
+end, 7)
+local streamingLbl = serverRow("Streaming", function()
+    return tostring(workspace.StreamingEnabled)
+end, 8)
+local gravityLbl = serverRow("Gravity", function()
+    return string.format("%.0f", workspace.Gravity)
+end, 9)
+
+refreshServerInfo = function()
+    pcall(function() jobIdLbl.Text = game.JobId ~= "" and game.JobId or "(private)" end)
+    pcall(function() placeIdLbl.Text = tostring(game.PlaceId) end)
+    pcall(function() versionLbl.Text = tostring(game.PlaceVersion) end)
+    pcall(function()
+        playersLbl.Text = string.format("%d / %d", #Players:GetPlayers(), Players.MaxPlayers)
+    end)
+    pcall(function()
+        local p = pingMs()
+        pingLbl.Text = p and (tostring(p) .. " ms") or "--"
+    end)
+    pcall(function()
+        local m = readMemory()
+        memLbl.Text = m and (tostring(m) .. " MB") or "--"
+    end)
+    pcall(function()
+        local s = math.floor(os.clock() - sessionStart)
+        uptimeLbl.Text = string.format("%02d:%02d:%02d",
+            math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60)
+    end)
+    pcall(function() streamingLbl.Text = tostring(workspace.StreamingEnabled) end)
+    pcall(function() gravityLbl.Text = string.format("%.0f", workspace.Gravity) end)
+end
+
+local copyBtn = makeButton(srvTab, "Copy JobId", function()
+    local jid = game.JobId
+    if jid == "" then
+        srvStatus.Text = "no job id (private server)"
+        return
+    end
+    local ok = false
+    if type(setclipboard) == "function" then
+        ok = pcall(setclipboard, jid)
+    end
+    if not ok and type(toclipboard) == "function" then
+        ok = pcall(toclipboard, jid)
+    end
+    srvStatus.Text = ok and "copied job id" or "clipboard unavailable"
+end, false)
+copyBtn.LayoutOrder = 10
+
+local srvRefreshBtn = makeButton(srvTab, "Refresh info", function()
+    refreshServerInfo()
+    srvStatus.Text = "refreshed"
+end, false)
+srvRefreshBtn.LayoutOrder = 11
+
+-- live refresh of server info
+task.spawn(function()
+    while not destroyed do
+        if activeTab == "srv" and refreshServerInfo then
+            pcall(refreshServerInfo)
+        end
+        task.wait(1)
+    end
+end)
+
+-- ============================================================
+--  stats overlay
 -- ============================================================
 local statsFrame = Instance.new("Frame")
 statsFrame.Size = UDim2.fromOffset(220, 24)
@@ -1770,28 +1942,6 @@ local statFrames = 0
 local statFps = 0
 local statClock = os.clock()
 
-local function readPing()
-    local ok, v = pcall(function()
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    if ok and type(v) == "number" and v >= 0 then return math.floor(v) end
-    local ok2, v2 = pcall(function()
-        return math.floor(LP:GetNetworkPing() * 1000)
-    end)
-    if ok2 and type(v2) == "number" then return v2 end
-    return nil
-end
-
-local function readMemory()
-    local ok, v = pcall(function()
-        return Stats:GetTotalMemoryUsageMb()
-    end)
-    if ok and type(v) == "number" then return math.floor(v) end
-    local ok2, v2 = pcall(function() return math.floor(gcinfo() / 1024) end)
-    if ok2 and type(v2) == "number" then return v2 end
-    return nil
-end
-
 task.spawn(function()
     while not destroyed do
         local now = os.clock()
@@ -1802,7 +1952,7 @@ task.spawn(function()
         end
 
         if state.stats then
-            local ping = readPing()
+            local ping = pingMs()
             local mem = readMemory()
             statsLabel.Text = string.format("FPS %d   |   %s ms   |   %s MB",
                 statFps,
@@ -1896,7 +2046,7 @@ local function isOverRect(x, y, obj)
     return x >= ap.X and x <= ap.X + asz.X and y >= ap.Y and y <= ap.Y + asz.Y
 end
 
--- click TP with single inset handling (IgnoreGuiInset = false)
+-- click TP: IgnoreGuiInset = true, so subtract inset for raycast
 local clickTpConn = UserInputService.InputBegan:Connect(function(input, processed)
     if destroyed or not state.clickTp or processed then return end
     if input.UserInputType ~= Enum.UserInputType.Touch
@@ -1910,7 +2060,8 @@ local clickTpConn = UserInputService.InputBegan:Connect(function(input, processe
     local cam = workspace.CurrentCamera
     if not cam then return end
 
-    local ray = cam:ViewportPointToRay(x, y)
+    local inset = GuiService:GetGuiInset()
+    local ray = cam:ViewportPointToRay(x - inset.X, y - inset.Y)
     local filter = {}
     local myChar = getChar()
     if myChar then table.insert(filter, myChar) end
@@ -1982,16 +2133,12 @@ task.spawn(function()
     end
 end)
 
--- rotation / viewport change
-local camConn = workspace.CurrentCamera and workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-    pcall(layoutPanel)
-end)
-
-local function onViewportChanged()
-    pcall(layoutPanel)
-end
+-- viewport change
+local camConn = nil
 if workspace.CurrentCamera then
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(onViewportChanged)
+    camConn = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+        pcall(layoutPanel)
+    end)
 end
 
 -- ============================================================
@@ -2032,6 +2179,7 @@ if getgenv then
         serverHop = serverHop,
         waypoints = waypoints,
         saveWaypoint = saveWaypoint,
+        refreshServerInfo = refreshServerInfo,
     }
 end
 
@@ -2039,4 +2187,5 @@ layoutPanel()
 syncUI()
 refreshPlayerList()
 refreshWaypointList()
+refreshServerInfo()
 showTab("move")
