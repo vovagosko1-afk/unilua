@@ -1,9 +1,9 @@
 --[[
-    Aero v2.7 - custom UI edition
-    - Added: Config system (Save/Load), Iridescent neon frames, Player info in SRV.
-    - Updated defaults: fov = 70, aimPing = 0.6.
-    - Removed: Noclip.
-    - UI: Smaller toggle button (44px).
+    Aero v2.7.1 - Stable Custom UI (No HTTP/Configs)
+    - Improved FPS Booster (deletes decals/textures, disables post-effects).
+    - Added Speed Presets on MOVE tab.
+    - Added ESP Tool Info (shows target's weapon).
+    - Removed: Server Hop, Save/Load Config, Noclip.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -15,10 +15,10 @@ local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Lighting         = game:GetService("Lighting")
 local TeleportService  = game:GetService("TeleportService")
-local HttpService      = game:GetService("HttpService")
 local Stats            = game:GetService("Stats")
 local GuiService       = game:GetService("GuiService")
 local TweenService     = game:GetService("TweenService")
+local SoundService     = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 if not LP then return end
@@ -36,8 +36,8 @@ local state = {
     predict = true, triggerbot = false, triggerFov = 45,
     esp = false, espHealth = true, fullbright = false,
     stats = false, fpsBoost = false, bhop = false,
-    spin = false, spinSpeed = 8, theme = "violet",
-    visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
+    spin = false, spinSpeed = 8, theme = "violet", fovColor = "theme",
+    visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.05,
 }
 
 local destroyed = false
@@ -164,7 +164,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster
+--  fps booster (Improved)
 -- ============================================================
 local boostState = nil
 local function setFpsBoost(on)
@@ -172,21 +172,37 @@ local function setFpsBoost(on)
     if on then
         if boostState then return end
         local ql = nil; pcall(function() ql = settings().Rendering.QualityLevel end)
-        boostState = { effects = {}, lighting = { GlobalShadows = Lighting.GlobalShadows, ShadowSoftness = Lighting.ShadowSoftness, EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale, EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale }, quality = ql }
+        boostState = {
+            quality = ql,
+            lighting = { GlobalShadows = Lighting.GlobalShadows, ShadowSoftness = Lighting.ShadowSoftness, EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale, EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale, FogEnd = Lighting.FogEnd },
+            destroyed = {}, hidden = {}
+        }
         if ql then pcall(function() settings().Rendering.QualityLevel = 1 end) end
-        Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0; Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
+        pcall(function() settings().Rendering.MeshPartDetail = 1 end)
+        pcall(function() settings().Rendering.TextureQuality = 1 end)
+        
+        Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0
+        Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
+        Lighting.FogEnd = 1e6
+        
         local ok, list = pcall(function() return workspace:GetDescendants() end)
         if ok then
             for _, inst in ipairs(list) do
                 if inst:IsA("ParticleEmitter") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Beam") or inst:IsA("Trail") then
-                    if inst.Enabled then boostState.effects[inst] = true; inst.Enabled = false end
+                    if inst.Enabled then inst.Enabled = false; boostState.hidden[inst] = true end
+                elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                    pcall(function() inst:Destroy() end); boostState.destroyed[inst] = true
+                elseif inst:IsA("PostEffect") then
+                    if inst.Enabled then inst.Enabled = false; boostState.hidden[inst] = true end
                 end
             end
         end
     elseif boostState then
-        for inst in pairs(boostState.effects) do if inst and inst.Parent then pcall(function() inst.Enabled = true end) end end
+        for inst in pairs(boostState.hidden) do if inst and inst.Parent then pcall(function() inst.Enabled = true end) end end
         for k, v in pairs(boostState.lighting) do pcall(function() Lighting[k] = v end) end
         if boostState.quality then pcall(function() settings().Rendering.QualityLevel = boostState.quality end) end
+        pcall(function() settings().Rendering.MeshPartDetail = 3 end)
+        pcall(function() settings().Rendering.TextureQuality = 3 end)
         boostState = nil
     end
 end
@@ -245,7 +261,7 @@ local function tpWaypoint(name)
 end
 
 -- ============================================================
---  server hop / rejoin
+--  rejoin
 -- ============================================================
 local function rejoin()
     if game.JobId == "" then return false, "no job id" end
@@ -254,43 +270,8 @@ local function rejoin()
     return false, "teleport failed"
 end
 
-local function serverHop()
-    local placeId = game.PlaceId
-    local urls = {
-        "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100",
-        "https://games.rprxy.xyz/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100",
-        "https://games.overscan.io/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-    }
-    local data = nil
-    local lastErr = "unknown"
-    for _, url in ipairs(urls) do
-        local ok, body = pcall(function()
-            return game:HttpGet(url, true, { ["User-Agent"] = "Roblox/WinInet", ["Accept"] = "application/json" })
-        end)
-        if ok and type(body) == "string" then
-            local decoded, parsed = pcall(function() return HttpService:JSONDecode(body) end)
-            if decoded and type(parsed) == "table" and parsed.data then
-                data = parsed
-                break
-            else lastErr = "bad json" end
-        else lastErr = "http " .. tostring(body) end
-    end
-    if not data or not data.data then return false, lastErr end
-    local pool = {}
-    for _, srv in ipairs(data.data) do
-        if type(srv) == "table" and srv.id and srv.id ~= game.JobId then
-            if (tonumber(srv.playing) or 0) < (tonumber(srv.maxPlayers) or 0) then table.insert(pool, srv.id) end
-        end
-    end
-    if #pool == 0 then return false, "no free servers" end
-    local target = pool[math.random(1, #pool)]
-    local ok2 = pcall(function() TeleportService:TeleportToPlaceInstance(placeId, target, LP) end)
-    if ok2 then return true end
-    return false, "teleport failed"
-end
-
 -- ============================================================
---  aimbot (improved)
+--  aimbot
 -- ============================================================
 local function hitboxPart(char)
     if state.hitbox == "root" then return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
@@ -391,7 +372,7 @@ local function newItem()
     local item = {}
     item.box = DrawingLib.new("Square"); item.box.Thickness = 1; item.box.Filled = false; item.box.Transparency = 1; item.box.Visible = false
     item.name = DrawingLib.new("Text"); item.name.Size = 13; item.name.Center = true; item.name.Outline = true; item.name.Visible = false
-    item.info = DrawingLib.new("Text"); item.info.Size = 12; item.info.Center = true; item.info.Outline = true; item.info.Visible = false
+    item.info = DrawingLib.new("Text"); item.info.Size = 11; item.info.Center = true; item.info.Outline = true; item.info.Visible = false
     item.hpBg = DrawingLib.new("Square"); item.hpBg.Filled = true; item.hpBg.Color = Color3.fromRGB(12, 12, 16); item.hpBg.Transparency = 0.35; item.hpBg.Visible = false
     item.hp = DrawingLib.new("Square"); item.hp.Filled = true; item.hp.Visible = false
     return item
@@ -438,8 +419,13 @@ local function espStep()
                         local h = math.abs(bottom.Y - top.Y); if h < 6 then h = 6 end; local w = h * 0.55
                         item.box.Color = color; item.box.Size = Vector2.new(w, h); item.box.Position = Vector2.new(top.X - w * 0.5, top.Y); item.box.Visible = true
                         item.name.Color = color; item.name.Text = plr.Name; item.name.Position = Vector2.new(top.X, top.Y - 16); item.name.Visible = true
+                        
                         local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
-                        item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m   %d hp", dist, math.floor(hum.Health))
+                        local tool = c:FindFirstChildOfClass("Tool")
+                        local toolName = tool and tool.Name or "Unarmed"
+                        if #toolName > 15 then toolName = string.sub(toolName, 1, 13) .. ".." end
+                        
+                        item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m | %d hp | %s", dist, math.floor(hum.Health), toolName)
                         item.info.Position = Vector2.new(top.X, top.Y + h + 2); item.info.Visible = true
                         if state.espHealth then
                             local frac = clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
@@ -491,9 +477,21 @@ local toastLayout = Instance.new("UIListLayout"); toastLayout.Padding = UDim.new
 local toastOrder = 0; local toastActive = {}
 local TOAST_COLORS = { info = Color3.fromRGB(86, 200, 255), ok = Color3.fromRGB(80, 235, 130), warn = Color3.fromRGB(255, 180, 70), err = Color3.fromRGB(235, 70, 90) }
 
+local function playNotifySound(kind)
+    local s = Instance.new("Sound")
+    s.Volume = 0.3
+    if kind == "err" then s.SoundId = "rbxassetid://6739879750"
+    elseif kind == "warn" then s.SoundId = "rbxassetid://6739879750"
+    else s.SoundId = "rbxassetid://6739879750" end
+    s.Parent = SoundService
+    s:Play()
+    task.spawn(function() task.wait(1); if s then s:Destroy() end end)
+end
+
 notify = function(text, kind, duration)
     if destroyed then return end
     kind = kind or "info"; duration = duration or 2.5; text = tostring(text or "")
+    pcall(playNotifySound, kind)
     while #toastActive >= 3 do local old = table.remove(toastActive, 1); if old and old.Parent then old:Destroy() end end
     toastOrder = toastOrder + 1
     local accent = TOAST_COLORS[kind] or TOAST_COLORS.info
@@ -505,16 +503,16 @@ notify = function(text, kind, duration)
     TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.05 }):Play()
     TweenService:Create(stroke, TweenInfo.new(0.18), { Transparency = 0.1 }):Play()
     TweenService:Create(lbl, TweenInfo.new(0.18), { TextTransparency = 0 }):Play()
-    task.delay(duration, function()
+    task.spawn(function()
+        task.wait(duration)
         if not frame or not frame.Parent then return end
         TweenService:Create(frame, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play(); TweenService:Create(lbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
         TweenService:Create(stroke, TweenInfo.new(0.25), { Transparency = 1 }):Play(); TweenService:Create(bar, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
-        task.delay(0.28, function()
-            if frame and frame.Parent then
-                local idx = nil; for i, t in ipairs(toastActive) do if t == frame then idx = i break end end
-                if idx then table.remove(toastActive, idx) end; frame:Destroy()
-            end
-        end)
+        task.wait(0.28)
+        if frame and frame.Parent then
+            local idx = nil; for i, t in ipairs(toastActive) do if t == frame then idx = i break end end
+            if idx then table.remove(toastActive, idx) end; frame:Destroy()
+        end
     end)
 end
 
@@ -563,7 +561,7 @@ task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.Abso
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.1"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -709,46 +707,28 @@ local function applyTheme(name)
         updateIridescentGradient(mainGlowGradient, Theme.neonB)
         updateIridescentGradient(reopenGradient, Theme.neonA)
         updateIridescentGradient(reopenGlowGradient, Theme.neonB)
-        if fovCircle then fovCircle.Color = Theme.accent end
+        if fovCircle and state.fovColor == "theme" then fovCircle.Color = Theme.accent end
     end)
     pcall(refreshTabStyles); pcall(syncUI); if notify then notify("theme: " .. name, "ok") end
-end
-
--- config system
-local function saveConfig()
-    local cfg = {
-        state = state,
-        waypoints = {}
-    }
-    for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
-    local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
-    if ok then
-        local wOk = pcall(function() writefile("AeroConfig.json", encoded) end)
-        if wOk then notify("config saved", "ok") else notify("save failed", "err") end
-    else notify("encode failed", "err") end
-end
-
-local function loadConfig()
-    local rOk, content = pcall(function() return readfile("AeroConfig.json") end)
-    if not rOk or not content then notify("config not found", "warn") return end
-    local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
-    if dOk and type(cfg) == "table" then
-        if cfg.state then
-            for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
-        end
-        if cfg.waypoints then
-            for k in pairs(waypoints) do waypoints[k] = nil end
-            for k, v in pairs(cfg.waypoints) do waypoints[k] = Vector3.new(v.x, v.y, v.z) end
-        end
-        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList(); refreshThemeButtons()
-        notify("config loaded", "ok")
-    else notify("decode failed", "err") end
 end
 
 -- MOVE
 local moveTab = newTab("move")
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function() return state.speed end, function(v) state.speed = v; applySpeed() end, 0)
 makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, function(v) state.jump = v; applyJump() end, 0)
+
+local presetCard = Instance.new("Frame")
+presetCard.Size = UDim2.new(1, 0, 0, 36); presetCard.BackgroundColor3 = Theme.card; presetCard.BorderSizePixel = 0; presetCard.LayoutOrder = nextOrder(); presetCard.Parent = moveTab; corner(presetCard, 10)
+local presetRow = Instance.new("Frame")
+presetRow.Size = UDim2.new(1, -16, 0, 24); presetRow.Position = UDim2.new(0, 8, 0.5, -12); presetRow.BackgroundTransparency = 1; presetRow.Parent = presetCard
+local presetGrid = Instance.new("UIGridLayout")
+presetGrid.CellSize = UDim2.new(0.333, -4, 1, 0); presetGrid.CellPadding = UDim2.new(0.01, 0, 0, 0); presetGrid.Parent = presetRow
+local speeds = { {n="Normal", v=16}, {n="Sprint", v=35}, {n="Fast", v=80} }
+for i, s in ipairs(speeds) do
+    local b = Instance.new("TextButton"); b.BackgroundColor3 = Theme.cardHi; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.TextColor3 = Theme.text; b.Text = s.n; b.LayoutOrder = i; b.Parent = presetRow; corner(b, 6)
+    b.MouseButton1Click:Connect(function() state.speed = s.v; applySpeed(); syncUI(); notify("speed: " .. s.v, "ok") end)
+end
+
 makeSwitch(moveTab, "Lock stats", function() return state.lockStats end, function(v) state.lockStats = v; if v then applyStats() end end)
 makeSwitch(moveTab, "Infinite jump", function() return state.infJump end, function(v) state.infJump = v end)
 makeSwitch(moveTab, "BHop", function() return state.bhop end, function(v) setBhop(v); notify("bhop " .. (v and "on" or "off"), v and "ok" or "info") end)
@@ -782,6 +762,25 @@ makeSlider(aimTab, "Trigger FOV", 5, 300, 5, function() return state.triggerFov 
 makeDropdown(aimTab, "Target Priority", {"closest", "lowhp", "threat"}, function() return state.targetMode end, function(v) state.targetMode = v end)
 makeDropdown(aimTab, "Hitbox", {"head", "root", "torso"}, function() return state.hitbox end, function(v) state.hitbox = v end)
 
+local fovColors = { "theme", "cyan", "red", "green", "yellow", "white" }
+local fovColorIdx = 1
+local fovBtn = makeButton(aimTab, "FOV Color: " .. fovColors[fovColorIdx], function(b)
+    fovColorIdx = fovColorIdx + 1
+    if fovColorIdx > #fovColors then fovColorIdx = 1 end
+    local c = fovColors[fovColorIdx]
+    state.fovColor = c
+    b.Text = "FOV Color: " .. c
+    if fovCircle then
+        if c == "theme" then fovCircle.Color = Theme.accent
+        elseif c == "cyan" then fovCircle.Color = Color3.fromRGB(86, 200, 255)
+        elseif c == "red" then fovCircle.Color = Color3.fromRGB(235, 70, 90)
+        elseif c == "green" then fovCircle.Color = Color3.fromRGB(60, 220, 120)
+        elseif c == "yellow" then fovCircle.Color = Color3.fromRGB(255, 220, 80)
+        elseif c == "white" then fovCircle.Color = Color3.fromRGB(255, 255, 255)
+        end
+    end
+end, false)
+
 -- VIS
 local visTab = newTab("vis")
 makeSwitch(visTab, "ESP", function() return state.esp end, function(v) state.esp = v; if not v then clearESP() end; notify("esp " .. (v and "on" or "off"), v and "ok" or "info") end)
@@ -804,9 +803,6 @@ for i, name in ipairs(themeNames) do
 end
 refreshThemeButtons()
 
-local configSaveBtn = makeButton(visTab, "Save Config", saveConfig, true); configSaveBtn.LayoutOrder = nextOrder()
-local configLoadBtn = makeButton(visTab, "Load Config", loadConfig, false); configLoadBtn.LayoutOrder = nextOrder()
-
 -- PLAY
 local playersTab = newTab("players")
 local statusLbl = Instance.new("TextLabel"); statusLbl.Size = UDim2.new(1, 0, 0, 14); statusLbl.BackgroundTransparency = 1; statusLbl.Font = Enum.Font.GothamMedium; statusLbl.TextSize = 10; statusLbl.TextColor3 = Theme.dim; statusLbl.TextXAlignment = Enum.TextXAlignment.Left; statusLbl.Text = ""; statusLbl.LayoutOrder = 2; statusLbl.Parent = playersTab
@@ -826,8 +822,7 @@ refreshPlayerList = function()
     if n == 0 then local l = Instance.new("TextLabel"); l.Size = UDim2.new(1, 0, 0, 24); l.BackgroundTransparency = 1; l.Font = Enum.Font.GothamMedium; l.TextSize = 12; l.TextColor3 = Theme.dim; l.Text = "no players"; l.Parent = playerBox end
 end
 local rejoinBtn = makeButton(playersTab, "Rejoin server", function() local ok, err = rejoin(); if ok then statusLbl.Text = "rejoining..."; notify("rejoining", "info") else statusLbl.Text = "rejoin failed: " .. tostring(err); notify("rejoin failed: " .. tostring(err), "err") end end, false); rejoinBtn.LayoutOrder = 3
-local hopBtn = makeButton(playersTab, "Server hop", function() statusLbl.Text = "searching servers..."; notify("searching servers", "info"); local ok, err = serverHop(); if ok then statusLbl.Text = "hopping..."; notify("hopping", "ok") else statusLbl.Text = "hop failed: " .. tostring(err); notify("hop failed: " .. tostring(err), "err") end end, false); hopBtn.LayoutOrder = 4
-local refreshBtn = makeButton(playersTab, "Refresh list", refreshPlayerList, false); refreshBtn.LayoutOrder = 5
+local refreshBtn = makeButton(playersTab, "Refresh list", refreshPlayerList, false); refreshBtn.LayoutOrder = 4
 
 -- WAY
 local wayTab = newTab("way")
@@ -867,7 +862,7 @@ local function serverRow(key, layoutOrder)
     local v = Instance.new("TextLabel"); v.Size = UDim2.new(0.58, -10, 1, 0); v.Position = UDim2.new(0.42, 0, 0, 0); v.BackgroundTransparency = 1; v.Font = Enum.Font.GothamBold; v.TextSize = 11; v.TextColor3 = Theme.text; v.TextXAlignment = Enum.TextXAlignment.Right; v.TextTruncate = Enum.TextTruncate.AtEnd; v.Text = "--"; v.Parent = row; return v
 end
 
-local playerInfoLbl = serverRow("Player info", 1); local jobIdLbl = serverRow("JobId", 2); local placeIdLbl = serverRow("PlaceId", 3); local versionLbl = serverRow("PlaceVersion", 4); local playersLbl = serverRow("Players", 5); local pingLbl = serverRow("Ping", 6); local memLbl = serverRow("Memory", 7); local uptimeLbl = serverRow("Session uptime", 8); local streamingLbl = serverRow("Streaming", 9); local gravityLbl = serverRow("Gravity", 10)
+local playerInfoLbl = serverRow("Player info", 1); local jobIdLbl = serverRow("JobId", 2); local placeIdLbl = serverRow("PlaceId", 3); local versionLbl = serverRow("PlaceVersion", 4); local playersLbl = serverRow("Players", 5); local pingLbl = serverRow("Ping", 6); local memLbl = serverRow("Memory", 7); local uptimeLbl = serverRow("Session uptime", 8); local streamingLbl = serverRow("Streaming", 9); local gravityLbl = serverRow("Gravity", 10); local regionLbl = serverRow("Region", 11)
 
 refreshServerInfo = function()
     pcall(function() playerInfoLbl.Text = LP.Name .. " (" .. LP.UserId .. ")" end)
@@ -880,6 +875,19 @@ refreshServerInfo = function()
     pcall(function() local s = math.floor(os.clock() - sessionStart); uptimeLbl.Text = string.format("%02d:%02d:%02d", math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60) end)
     pcall(function() streamingLbl.Text = tostring(workspace.StreamingEnabled) end)
     pcall(function() gravityLbl.Text = string.format("%.0f", workspace.Gravity) end)
+    pcall(function()
+        local region = "Unknown"
+        if RunService:IsStudio() then region = "Studio" else
+            local p = pingMs()
+            if p then
+                if p < 40 then region = "Local/NA"
+                elseif p < 80 then region = "EU/NA"
+                elseif p < 130 then region = "ASIA"
+                else region = "Far" end
+            end
+        end
+        regionLbl.Text = region
+    end)
 end
 
 local copyBtn = makeButton(srvTab, "Copy JobId", function()
@@ -896,14 +904,27 @@ task.spawn(function() while not destroyed do if activeTab == "srv" and refreshSe
 local statsFrame = Instance.new("Frame"); statsFrame.Size = UDim2.fromOffset(220, 24); statsFrame.AnchorPoint = Vector2.new(0.5, 0); statsFrame.Position = UDim2.new(0.5, 0, 0, 10); statsFrame.BackgroundColor3 = Theme.bg; statsFrame.BackgroundTransparency = 0.3; statsFrame.BorderSizePixel = 0; statsFrame.Visible = false; statsFrame.ZIndex = 20; statsFrame.Parent = gui; corner(statsFrame, 12)
 local statsStroke = Instance.new("UIStroke"); statsStroke.Color = Theme.line; statsStroke.Thickness = 1; statsStroke.Transparency = 0.35; statsStroke.Parent = statsFrame
 local statsLabel = Instance.new("TextLabel"); statsLabel.Size = UDim2.new(1, 0, 1, 0); statsLabel.BackgroundTransparency = 1; statsLabel.Font = Enum.Font.GothamBold; statsLabel.TextSize = 11; statsLabel.TextColor3 = Theme.text; statsLabel.Text = "FPS --   |   -- ms   |   -- MB"; statsLabel.Parent = statsFrame
-local statFrames, statFps, statClock = 0, 0, os.clock()
+local statFrames, statFps, lastStatTime = 0, 0, tick()
 
 task.spawn(function()
     while not destroyed do
-        local now = os.clock(); if now - statClock >= 0.5 then statFps = math.floor(statFrames / (now - statClock) + 0.5); statFrames = 0; statClock = now end
+        local now = tick()
+        local elapsed = now - lastStatTime
+        if elapsed >= 1 then
+            statFps = math.floor(statFrames / elapsed + 0.5)
+            statFrames = 0
+            lastStatTime = now
+        end
         if state.stats then
-            local p = pingMs(); local m = readMemory(); statsLabel.Text = string.format("FPS %d   |   %s ms   |   %s MB", statFps, p and tostring(p) or "--", m and tostring(m) or "--")
-            statsLabel.TextColor3 = statFps < 30 and Color3.fromRGB(255, 120, 120) or Theme.text; statsFrame.Visible = true
+            local p = pingMs(); local m = readMemory()
+            local fpsText = tostring(statFps)
+            local pingText = p and (tostring(p) .. " ms") or "--"
+            local memText = m and (tostring(m) .. " MB") or "--"
+            statsLabel.Text = string.format("FPS %s   |   %s   |   %s", fpsText, pingText, memText)
+            if statFps < 30 or (p and p > 150) then statsLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            elseif statFps < 45 or (p and p > 80) then statsLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+            else statsLabel.TextColor3 = Theme.text end
+            statsFrame.Visible = true
         else statsFrame.Visible = false end
         task.wait(0.25)
     end
@@ -957,7 +978,7 @@ destroy = function()
 end
 
 if getgenv then
-    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
+    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo }
 end
 
 applyTheme(state.theme)
