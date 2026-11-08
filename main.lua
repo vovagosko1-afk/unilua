@@ -1,9 +1,7 @@
 --[[
-    Aero v2.7 - custom UI edition
-    - Added: Config system (Save/Load), Iridescent neon frames, Player info in SRV.
-    - Updated defaults: fov = 70, aimPing = 0.6.
-    - Removed: Noclip.
-    - UI: Smaller toggle button (44px).
+    Aero v2.7.6 - 2.7 Base + 2.7.1 Features
+    - Added: Improved FPS Booster, Speed Presets, ESP Tool Info.
+    - Kept: Configs, Server Hop, Iridescent frames.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -19,6 +17,7 @@ local HttpService      = game:GetService("HttpService")
 local Stats            = game:GetService("Stats")
 local GuiService       = game:GetService("GuiService")
 local TweenService     = game:GetService("TweenService")
+local SoundService     = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 if not LP then return end
@@ -164,7 +163,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster
+--  fps booster (Improved from 2.7.1)
 -- ============================================================
 local boostState = nil
 local function setFpsBoost(on)
@@ -172,21 +171,37 @@ local function setFpsBoost(on)
     if on then
         if boostState then return end
         local ql = nil; pcall(function() ql = settings().Rendering.QualityLevel end)
-        boostState = { effects = {}, lighting = { GlobalShadows = Lighting.GlobalShadows, ShadowSoftness = Lighting.ShadowSoftness, EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale, EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale }, quality = ql }
+        boostState = {
+            quality = ql,
+            lighting = { GlobalShadows = Lighting.GlobalShadows, ShadowSoftness = Lighting.ShadowSoftness, EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale, EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale, FogEnd = Lighting.FogEnd },
+            destroyed = {}, hidden = {}
+        }
         if ql then pcall(function() settings().Rendering.QualityLevel = 1 end) end
-        Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0; Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
+        pcall(function() settings().Rendering.MeshPartDetail = 1 end)
+        pcall(function() settings().Rendering.TextureQuality = 1 end)
+        
+        Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0
+        Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
+        Lighting.FogEnd = 1e6
+        
         local ok, list = pcall(function() return workspace:GetDescendants() end)
         if ok then
             for _, inst in ipairs(list) do
                 if inst:IsA("ParticleEmitter") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Beam") or inst:IsA("Trail") then
-                    if inst.Enabled then boostState.effects[inst] = true; inst.Enabled = false end
+                    if inst.Enabled then inst.Enabled = false; boostState.hidden[inst] = true end
+                elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                    pcall(function() inst:Destroy() end); boostState.destroyed[inst] = true
+                elseif inst:IsA("PostEffect") then
+                    if inst.Enabled then inst.Enabled = false; boostState.hidden[inst] = true end
                 end
             end
         end
     elseif boostState then
-        for inst in pairs(boostState.effects) do if inst and inst.Parent then pcall(function() inst.Enabled = true end) end end
+        for inst in pairs(boostState.hidden) do if inst and inst.Parent then pcall(function() inst.Enabled = true end) end end
         for k, v in pairs(boostState.lighting) do pcall(function() Lighting[k] = v end) end
         if boostState.quality then pcall(function() settings().Rendering.QualityLevel = boostState.quality end) end
+        pcall(function() settings().Rendering.MeshPartDetail = 3 end)
+        pcall(function() settings().Rendering.TextureQuality = 3 end)
         boostState = nil
     end
 end
@@ -438,9 +453,16 @@ local function espStep()
                         local h = math.abs(bottom.Y - top.Y); if h < 6 then h = 6 end; local w = h * 0.55
                         item.box.Color = color; item.box.Size = Vector2.new(w, h); item.box.Position = Vector2.new(top.X - w * 0.5, top.Y); item.box.Visible = true
                         item.name.Color = color; item.name.Text = plr.Name; item.name.Position = Vector2.new(top.X, top.Y - 16); item.name.Visible = true
+                        
+                        -- ESP Tool Info (from 2.7.1)
                         local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
-                        item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m   %d hp", dist, math.floor(hum.Health))
+                        local tool = c:FindFirstChildOfClass("Tool")
+                        local toolName = tool and tool.Name or "Unarmed"
+                        if #toolName > 15 then toolName = string.sub(toolName, 1, 13) .. ".." end
+                        
+                        item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m | %d hp | %s", dist, math.floor(hum.Health), toolName)
                         item.info.Position = Vector2.new(top.X, top.Y + h + 2); item.info.Visible = true
+                        
                         if state.espHealth then
                             local frac = clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                             local barX = top.X - w * 0.5 - 7
@@ -563,7 +585,7 @@ task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.Abso
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.6"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -749,6 +771,20 @@ end
 local moveTab = newTab("move")
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function() return state.speed end, function(v) state.speed = v; applySpeed() end, 0)
 makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, function(v) state.jump = v; applyJump() end, 0)
+
+-- Speed Presets (from 2.7.1)
+local presetCard = Instance.new("Frame")
+presetCard.Size = UDim2.new(1, 0, 0, 36); presetCard.BackgroundColor3 = Theme.card; presetCard.BorderSizePixel = 0; presetCard.LayoutOrder = nextOrder(); presetCard.Parent = moveTab; corner(presetCard, 10)
+local presetRow = Instance.new("Frame")
+presetRow.Size = UDim2.new(1, -16, 0, 24); presetRow.Position = UDim2.new(0, 8, 0.5, -12); presetRow.BackgroundTransparency = 1; presetRow.Parent = presetCard
+local presetGrid = Instance.new("UIGridLayout")
+presetGrid.CellSize = UDim2.new(0.333, -4, 1, 0); presetGrid.CellPadding = UDim2.new(0.01, 0, 0, 0); presetGrid.Parent = presetRow
+local speeds = { {n="Normal", v=16}, {n="Sprint", v=35}, {n="Fast", v=80} }
+for i, s in ipairs(speeds) do
+    local b = Instance.new("TextButton"); b.BackgroundColor3 = Theme.cardHi; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.TextColor3 = Theme.text; b.Text = s.n; b.LayoutOrder = i; b.Parent = presetRow; corner(b, 6)
+    b.MouseButton1Click:Connect(function() state.speed = s.v; applySpeed(); syncUI(); notify("speed: " .. s.v, "ok") end)
+end
+
 makeSwitch(moveTab, "Lock stats", function() return state.lockStats end, function(v) state.lockStats = v; if v then applyStats() end end)
 makeSwitch(moveTab, "Infinite jump", function() return state.infJump end, function(v) state.infJump = v end)
 makeSwitch(moveTab, "BHop", function() return state.bhop end, function(v) setBhop(v); notify("bhop " .. (v and "on" or "off"), v and "ok" or "info") end)
