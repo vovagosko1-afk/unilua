@@ -1,12 +1,12 @@
 --[[
-    Aero v2.7.6+ (Rounded UI + Enhanced Neon Glow + Improved Theme Selector)
+    Aero v2.7.6 (Radar + Iridescent Neon + Full Theme Sync + Joystick Fly + Silver/Pink/Gold Themes)
     Разделы кода:
       1. Сервисы, состояние (state) и вспомогательные функции
       2. Движение, полет через джойстик, BHOP и Spinbot
       3. Освещение, FPS Boost и телепортация / сервера
       4. Аимбот, триггербот и ESP
       5. Радар в правом верхнем углу
-      6. Интерфейс, скругления, неоновое свечение и улучшенные темы
+      6. Интерфейс, переливающаяся рамка и полная смена тем (Silver, Pink, Gold)
       7. Главный цикл, события и очистка (destroy)
 ]]
 
@@ -35,7 +35,7 @@ pcall(function()
     if ok and type(v) == "function" then DrawingLib = Drawing end
 end)
 
--- Основные настройки скрипта (можно менять значения по умолчанию)
+-- Основные настройки скрипта (по умолчанию выбрана металлическая тема "silver")
 local state = {
     speed = 16, jump = 50, lockStats = false, infJump = false,
     fly = false, flySpeed = 60, flyVertical = true, clickTp = false,
@@ -43,7 +43,7 @@ local state = {
     predict = true, triggerbot = false, triggerFov = 45,
     esp = false, espHealth = true, fullbright = false,
     stats = false, fpsBoost = false, bhop = false,
-    spin = false, spinSpeed = 8, theme = "violet",
+    spin = false, spinSpeed = 8, theme = "silver",
     visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
     radar = true, radarRange = 160, radarSize = 116,
 }
@@ -592,7 +592,7 @@ if DrawingLib then
 
         radarBorder = DrawingLib.new("Circle")
         radarBorder.Filled = false; radarBorder.NumSides = 48; radarBorder.Thickness = 2
-        radarBorder.Transparency = 0.95; radarBorder.Color = Color3.fromRGB(124, 92, 255); radarBorder.Visible = false
+        radarBorder.Transparency = 0.95; radarBorder.Color = Color3.fromRGB(195, 204, 218); radarBorder.Visible = false
 
         radarCrossH = DrawingLib.new("Line")
         radarCrossH.Thickness = 1; radarCrossH.Transparency = 0.25
@@ -701,65 +701,74 @@ local function radarStep()
 end
 
 -- ============================================================
---  6. ИНТЕРФЕЙС, СКРУГЛЕНИЯ, НЕОНОВОЕ СВЕЧЕНИЕ И УЛУЧШЕННЫЕ ТЕМЫ
+--  6. ИНТЕРФЕЙС, ПЕРЕЛИВАЮЩАЯСЯ РАМКА И ПОЛНАЯ СМЕНА ТЕМ
 -- ============================================================
 local Theme = {
-    bg = Color3.fromRGB(15, 13, 24),
-    card = Color3.fromRGB(26, 23, 40),
-    cardHi = Color3.fromRGB(38, 33, 58),
-    line = Color3.fromRGB(68, 56, 104),
-    text = Color3.fromRGB(242, 239, 255),
-    dim = Color3.fromRGB(162, 154, 194),
-    accent = Color3.fromRGB(132, 92, 255),
-    accent2 = Color3.fromRGB(190, 120, 255),
-    neonA = Color3.fromRGB(140, 88, 255),
-    neonB = Color3.fromRGB(92, 210, 255),
+    bg = Color3.fromRGB(16, 18, 22),
+    card = Color3.fromRGB(27, 30, 36),
+    cardHi = Color3.fromRGB(39, 43, 52),
+    line = Color3.fromRGB(76, 84, 98),
+    text = Color3.fromRGB(244, 247, 252),
+    dim = Color3.fromRGB(162, 171, 186),
+    accent = Color3.fromRGB(185, 196, 212),
+    accent2 = Color3.fromRGB(238, 244, 255),
+    neonA = Color3.fromRGB(155, 168, 188),
+    neonB = Color3.fromRGB(245, 250, 255),
 }
 
 local THEMES = {
+    -- Основная тема: металлический блестящий Silver
+    silver = {
+        bg = Color3.fromRGB(16, 18, 22), card = Color3.fromRGB(27, 30, 36), cardHi = Color3.fromRGB(39, 43, 52),
+        line = Color3.fromRGB(76, 84, 98), text = Color3.fromRGB(244, 247, 252), dim = Color3.fromRGB(162, 171, 186),
+        accent = Color3.fromRGB(185, 196, 212), accent2 = Color3.fromRGB(238, 244, 255),
+        neonA = Color3.fromRGB(150, 164, 184), neonB = Color3.fromRGB(245, 250, 255),
+    },
+    -- Новая тема: розовый Pink
+    pink = {
+        bg = Color3.fromRGB(24, 12, 20), card = Color3.fromRGB(40, 19, 34), cardHi = Color3.fromRGB(56, 27, 47),
+        line = Color3.fromRGB(108, 48, 88), text = Color3.fromRGB(255, 238, 249), dim = Color3.fromRGB(206, 148, 186),
+        accent = Color3.fromRGB(244, 92, 176), accent2 = Color3.fromRGB(255, 176, 222),
+        neonA = Color3.fromRGB(248, 82, 170), neonB = Color3.fromRGB(255, 185, 228),
+    },
+    -- Новая тема: золотой Gold
+    gold = {
+        bg = Color3.fromRGB(23, 18, 10), card = Color3.fromRGB(39, 30, 15), cardHi = Color3.fromRGB(54, 42, 21),
+        line = Color3.fromRGB(106, 82, 36), text = Color3.fromRGB(255, 248, 228), dim = Color3.fromRGB(204, 180, 124),
+        accent = Color3.fromRGB(238, 182, 48), accent2 = Color3.fromRGB(255, 226, 128),
+        neonA = Color3.fromRGB(242, 176, 36), neonB = Color3.fromRGB(255, 232, 140),
+    },
     violet = {
         bg = Color3.fromRGB(15, 13, 24), card = Color3.fromRGB(26, 23, 40), cardHi = Color3.fromRGB(38, 33, 58),
         line = Color3.fromRGB(68, 56, 104), text = Color3.fromRGB(242, 239, 255), dim = Color3.fromRGB(162, 154, 194),
         accent = Color3.fromRGB(132, 92, 255), accent2 = Color3.fromRGB(190, 120, 255),
-        neonA = Color3.fromRGB(145, 92, 255), neonB = Color3.fromRGB(102, 220, 255),
+        neonA = Color3.fromRGB(140, 88, 255), neonB = Color3.fromRGB(92, 210, 255),
     },
     cyan = {
         bg = Color3.fromRGB(11, 20, 25), card = Color3.fromRGB(18, 33, 41), cardHi = Color3.fromRGB(26, 47, 58),
         line = Color3.fromRGB(42, 86, 104), text = Color3.fromRGB(234, 250, 255), dim = Color3.fromRGB(142, 188, 204),
         accent = Color3.fromRGB(28, 198, 224), accent2 = Color3.fromRGB(115, 245, 225),
-        neonA = Color3.fromRGB(28, 215, 240), neonB = Color3.fromRGB(125, 255, 215),
+        neonA = Color3.fromRGB(24, 210, 235), neonB = Color3.fromRGB(120, 255, 210),
     },
     green = {
         bg = Color3.fromRGB(12, 22, 16), card = Color3.fromRGB(19, 36, 26), cardHi = Color3.fromRGB(28, 52, 38),
         line = Color3.fromRGB(46, 94, 66), text = Color3.fromRGB(236, 255, 242), dim = Color3.fromRGB(146, 194, 164),
         accent = Color3.fromRGB(48, 208, 112), accent2 = Color3.fromRGB(165, 250, 120),
-        neonA = Color3.fromRGB(48, 228, 118), neonB = Color3.fromRGB(195, 255, 115),
+        neonA = Color3.fromRGB(45, 225, 115), neonB = Color3.fromRGB(190, 255, 110),
     },
     red = {
         bg = Color3.fromRGB(24, 12, 15), card = Color3.fromRGB(40, 20, 25), cardHi = Color3.fromRGB(56, 28, 35),
         line = Color3.fromRGB(104, 48, 60), text = Color3.fromRGB(255, 238, 242), dim = Color3.fromRGB(198, 150, 160),
         accent = Color3.fromRGB(232, 66, 88), accent2 = Color3.fromRGB(255, 155, 95),
-        neonA = Color3.fromRGB(248, 66, 92), neonB = Color3.fromRGB(255, 168, 72),
+        neonA = Color3.fromRGB(245, 62, 88), neonB = Color3.fromRGB(255, 165, 70),
     },
 }
 
--- Скругление углов с минимальным радиусом по умолчанию для аккуратного вида
 local function corner(parent, r)
     local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r or 10)
+    c.CornerRadius = UDim.new(0, r)
     c.Parent = parent
     return c
-end
-
--- Тонкая обводка карточек и элементов управления с привязкой к теме
-local function softStroke(parent, color, thickness, transparency)
-    local st = Instance.new("UIStroke")
-    st.Color = color or Theme.line
-    st.Thickness = thickness or 1
-    st.Transparency = transparency or 0.45
-    st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    st.Parent = parent
-    return st
 end
 
 local function resolveGuiParent()
@@ -773,7 +782,7 @@ local themeListeners = {}
 local function registerThemeSync(fn) table.insert(themeListeners, fn) end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "AeroNeonRounded"
+gui.Name = "AeroNeon"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -783,7 +792,7 @@ if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
 
 -- Уведомления
 local toastHolder = Instance.new("Frame")
-toastHolder.Size = UDim2.new(0, 248, 0, 220)
+toastHolder.Size = UDim2.new(0, 245, 0, 220)
 toastHolder.AnchorPoint = Vector2.new(1, 0)
 toastHolder.Position = UDim2.new(1, -14, 0, 156)
 toastHolder.BackgroundTransparency = 1
@@ -791,7 +800,7 @@ toastHolder.ZIndex = 50
 toastHolder.Parent = gui
 
 local toastLayout = Instance.new("UIListLayout")
-toastLayout.Padding = UDim.new(0, 6)
+toastLayout.Padding = UDim.new(0, 5)
 toastLayout.SortOrder = Enum.SortOrder.LayoutOrder
 toastLayout.VerticalAlignment = Enum.VerticalAlignment.Top
 toastLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
@@ -815,21 +824,21 @@ notify = function(text, kind, duration)
     toastOrder = toastOrder + 1
     local accent = TOAST_COLORS[kind] or TOAST_COLORS.info
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 0, 32)
+    frame.Size = UDim2.new(1, 0, 0, 30)
     frame.BackgroundColor3 = Theme.card
     frame.BorderSizePixel = 0
     frame.ZIndex = 51
     frame.LayoutOrder = toastOrder
     frame.Parent = toastHolder
-    corner(frame, 10)
+    corner(frame, 8)
     registerThemeSync(function() if frame.Parent then frame.BackgroundColor3 = Theme.card end end)
 
     local fStroke = Instance.new("UIStroke")
-    fStroke.Color = accent; fStroke.Thickness = 1.2; fStroke.Transparency = 0.2; fStroke.Parent = frame
+    fStroke.Color = accent; fStroke.Thickness = 1; fStroke.Transparency = 0.25; fStroke.Parent = frame
 
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -16, 1, 0)
-    lbl.Position = UDim2.fromOffset(8, 0)
+    lbl.Size = UDim2.new(1, -14, 1, 0)
+    lbl.Position = UDim2.fromOffset(7, 0)
     lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamMedium
     lbl.TextSize = 11
@@ -852,8 +861,8 @@ notify = function(text, kind, duration)
     end)
 end
 
--- Главное меню со скругленными краями и усиленным неоновым свечением
-local PANEL_W, PANEL_H, TAB_BAR_H = 296, 428, 44
+-- Главное меню и переливающаяся неоновая рамка
+local PANEL_W, PANEL_H, TAB_BAR_H = 294, 424, 42
 local main = Instance.new("Frame")
 main.Name = "AeroMain"
 main.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
@@ -864,7 +873,7 @@ main.Active = true
 main.ClipsDescendants = false
 main.ZIndex = 10
 main.Parent = gui
-corner(main, 16)
+corner(main, 12)
 
 local mainInner = Instance.new("Frame")
 mainInner.Size = UDim2.new(1, 0, 1, 0)
@@ -872,34 +881,32 @@ mainInner.BackgroundTransparency = 1
 mainInner.ClipsDescendants = true
 mainInner.ZIndex = 10
 mainInner.Parent = main
-corner(mainInner, 16)
+corner(mainInner, 12)
 
--- Четкая переливающаяся неоновая рамка
 local mainNeonStroke = Instance.new("UIStroke")
 mainNeonStroke.Color = Color3.fromRGB(255, 255, 255)
-mainNeonStroke.Thickness = 2.4
-mainNeonStroke.Transparency = 0.04
+mainNeonStroke.Thickness = 2.2
+mainNeonStroke.Transparency = 0.05
 mainNeonStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 mainNeonStroke.Parent = main
 
 local mainNeonGrad = Instance.new("UIGradient")
 mainNeonGrad.Parent = mainNeonStroke
 
--- Мягкий внешний неоновый ореол (свечение)
 local mainNeonGlow = Instance.new("UIStroke")
 mainNeonGlow.Color = Color3.fromRGB(255, 255, 255)
-mainNeonGlow.Thickness = 10
-mainNeonGlow.Transparency = 0.78
+mainNeonGlow.Thickness = 7
+mainNeonGlow.Transparency = 0.82
 mainNeonGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 mainNeonGlow.Parent = main
 
 local mainGlowGrad = Instance.new("UIGradient")
 mainGlowGrad.Parent = mainNeonGlow
 
--- Плавающая кнопка открытия/сворачивания с неоновым свечением
+-- Плавающая кнопка открытия/сворачивания с переливающейся рамкой
 local reopen = Instance.new("TextButton")
 reopen.Name = "AeroToggle"
-reopen.Size = UDim2.fromOffset(48, 48)
+reopen.Size = UDim2.fromOffset(46, 46)
 reopen.Position = UDim2.fromOffset(16, 16)
 reopen.BackgroundColor3 = Theme.card
 reopen.BorderSizePixel = 0
@@ -910,12 +917,12 @@ reopen.Text = "AERO"
 reopen.AutoButtonColor = false
 reopen.ZIndex = 10
 reopen.Parent = gui
-corner(reopen, 24)
+corner(reopen, 23)
 
 local reopenNeonStroke = Instance.new("UIStroke")
 reopenNeonStroke.Color = Color3.fromRGB(255, 255, 255)
-reopenNeonStroke.Thickness = 2.4
-reopenNeonStroke.Transparency = 0.04
+reopenNeonStroke.Thickness = 2.2
+reopenNeonStroke.Transparency = 0.05
 reopenNeonStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 reopenNeonStroke.Parent = reopen
 
@@ -924,8 +931,8 @@ reopenNeonGrad.Parent = reopenNeonStroke
 
 local reopenNeonGlow = Instance.new("UIStroke")
 reopenNeonGlow.Color = Color3.fromRGB(255, 255, 255)
-reopenNeonGlow.Thickness = 8.5
-reopenNeonGlow.Transparency = 0.79
+reopenNeonGlow.Thickness = 6
+reopenNeonGlow.Transparency = 0.84
 reopenNeonGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 reopenNeonGlow.Parent = reopen
 
@@ -934,11 +941,10 @@ reopenGlowGrad.Parent = reopenNeonGlow
 
 local reopenUserMoved = false
 
--- Формируем плавный неоновый градиент с яркими переливами между двумя цветами темы
 local function applyIridescentSequence(grad, cA, cB)
     if not grad then return end
-    local brightA = Color3.new(math.min(cA.R * 1.55, 1), math.min(cA.G * 1.55, 1), math.min(cA.B * 1.55, 1))
-    local brightB = Color3.new(math.min(cB.R * 1.55, 1), math.min(cB.G * 1.55, 1), math.min(cB.B * 1.55, 1))
+    local brightA = Color3.new(math.min(cA.R * 1.45, 1), math.min(cA.G * 1.45, 1), math.min(cA.B * 1.45, 1))
+    local brightB = Color3.new(math.min(cB.R * 1.45, 1), math.min(cB.G * 1.45, 1), math.min(cB.B * 1.45, 1))
     grad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0.00, cA),
         ColorSequenceKeypoint.new(0.25, brightB),
@@ -955,8 +961,8 @@ local function layoutPanel()
         if cam then vp = cam.ViewportSize end
     end
     if vp.X < 10 then vp = Vector2.new(400, 700) end
-    local w = clamp(math.floor(vp.X * 0.54), 254, 340)
-    local h = clamp(math.floor(vp.Y * 0.60), 308, 470)
+    local w = clamp(math.floor(vp.X * 0.54), 252, 336)
+    local h = clamp(math.floor(vp.Y * 0.60), 305, 465)
     PANEL_W = w; PANEL_H = h
     main.Size = UDim2.fromOffset(w, h)
     if not reopenUserMoved then reopen.Position = UDim2.fromOffset(16, 16) end
@@ -971,17 +977,16 @@ task.spawn(function()
     pcall(layoutPanel)
 end)
 
--- Шапка с закругленными углами
+-- Шапка
 local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 40)
+header.Size = UDim2.new(1, 0, 0, 38)
 header.BackgroundColor3 = Theme.card
 header.BorderSizePixel = 0
 header.Parent = mainInner
-corner(header, 14)
 
 local brand = Instance.new("TextLabel")
-brand.Size = UDim2.new(1, -96, 1, 0)
-brand.Position = UDim2.fromOffset(14, 0)
+brand.Size = UDim2.new(1, -94, 1, 0)
+brand.Position = UDim2.fromOffset(12, 0)
 brand.BackgroundTransparency = 1
 brand.Font = Enum.Font.GothamBold
 brand.TextSize = 14
@@ -992,7 +997,7 @@ brand.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(26, 26)
+    b.Size = UDim2.fromOffset(26, 24)
     b.Position = UDim2.new(1, x, 0, 7)
     b.BackgroundColor3 = Theme.cardHi
     b.BorderSizePixel = 0
@@ -1001,11 +1006,9 @@ local function headerButton(text, x, onClick)
     b.TextColor3 = Theme.text
     b.Text = text
     b.Parent = header
-    corner(b, 8)
-    local st = softStroke(b, Theme.line, 1, 0.35)
+    corner(b, 6)
     registerThemeSync(function()
         if b.Parent then b.BackgroundColor3 = Theme.cardHi; b.TextColor3 = Theme.text end
-        if st.Parent then st.Color = Theme.line end
     end)
     b.MouseButton1Click:Connect(function()
         local ok, err = pcall(onClick)
@@ -1023,11 +1026,10 @@ tabBar.Position = UDim2.new(0, 0, 1, -TAB_BAR_H)
 tabBar.BackgroundColor3 = Theme.card
 tabBar.BorderSizePixel = 0
 tabBar.Parent = mainInner
-corner(tabBar, 14)
 
 local content = Instance.new("Frame")
-content.Size = UDim2.new(1, 0, 1, -(40 + TAB_BAR_H))
-content.Position = UDim2.fromOffset(0, 40)
+content.Size = UDim2.new(1, 0, 1, -(38 + TAB_BAR_H))
+content.Position = UDim2.fromOffset(0, 38)
 content.BackgroundTransparency = 1
 content.Parent = mainInner
 
@@ -1050,11 +1052,11 @@ local function newTab(id)
 
     local pad = Instance.new("UIPadding")
     pad.PaddingTop = UDim.new(0, 6); pad.PaddingBottom = UDim.new(0, 8)
-    pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
+    pad.PaddingLeft = UDim.new(0, 7); pad.PaddingRight = UDim.new(0, 7)
     pad.Parent = sf
 
     local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 5)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = sf
 
@@ -1086,7 +1088,7 @@ local tabDefs = {
 local tabN = #tabDefs
 for i, def in ipairs(tabDefs) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1 / tabN, -4, 0, 30)
+    b.Size = UDim2.new(1 / tabN, -4, 0, 28)
     b.Position = UDim2.new((i - 1) / tabN, 2, 0, 7)
     b.BackgroundColor3 = Theme.cardHi
     b.BorderSizePixel = 0
@@ -1095,7 +1097,7 @@ for i, def in ipairs(tabDefs) do
     b.TextColor3 = Theme.dim
     b.Text = def[2]
     b.Parent = tabBar
-    corner(b, 8)
+    corner(b, 6)
     b.MouseButton1Click:Connect(function() showTab(def[1]) end)
     tabButtons[def[1]] = b
 end
@@ -1144,7 +1146,7 @@ local dragConn = UserInputService.InputChanged:Connect(function(input)
     main.Position = UDim2.new(0, clamp(dragOrigin.X.Offset + delta.X, -(PANEL_W - 80), sw - 80), 0, clamp(dragOrigin.Y.Offset + delta.Y, -(PANEL_H - 90), sh - 90))
 end)
 
--- Виджеты со скруглением и полной синхронизацией темы
+-- Виджеты с поддержкой смены темы
 local uiRefreshers, uiOrder = {}, 0
 local function nextOrder() uiOrder = uiOrder + 1; return uiOrder end
 local function syncUI() for _, f in ipairs(uiRefreshers) do pcall(f) end end
@@ -1156,12 +1158,8 @@ local function card(parent, height)
     row.BorderSizePixel = 0
     row.LayoutOrder = nextOrder()
     row.Parent = parent
-    corner(row, 10)
-    local st = softStroke(row, Theme.line, 1, 0.45)
-    registerThemeSync(function()
-        if row.Parent then row.BackgroundColor3 = Theme.card end
-        if st.Parent then st.Color = Theme.line end
-    end)
+    corner(row, 8)
+    registerThemeSync(function() if row.Parent then row.BackgroundColor3 = Theme.card end end)
     return row
 end
 
@@ -1174,7 +1172,7 @@ local function makeSwitch(parent, text, get, set)
     registerThemeSync(function() if lbl.Parent then lbl.TextColor3 = Theme.text end end)
 
     local pill = Instance.new("Frame")
-    pill.Size = UDim2.fromOffset(38, 20); pill.Position = UDim2.new(1, -48, 0.5, -10)
+    pill.Size = UDim2.fromOffset(36, 20); pill.Position = UDim2.new(1, -46, 0.5, -10)
     pill.BackgroundColor3 = Theme.line; pill.BorderSizePixel = 0; pill.Parent = row; corner(pill, 10)
 
     local knob = Instance.new("Frame")
@@ -1182,13 +1180,13 @@ local function makeSwitch(parent, text, get, set)
     knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250); knob.BorderSizePixel = 0; knob.Parent = pill; corner(knob, 7)
 
     local hit = Instance.new("TextButton")
-    hit.Size = UDim2.fromOffset(56, 38); hit.Position = UDim2.new(1, -56, 0, 0)
+    hit.Size = UDim2.fromOffset(54, 38); hit.Position = UDim2.new(1, -54, 0, 0)
     hit.BackgroundTransparency = 1; hit.Text = ""; hit.Parent = row
 
     local function refresh()
         local on = get()
         pill.BackgroundColor3 = on and Theme.accent or Theme.line
-        knob.Position = on and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3)
+        knob.Position = on and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3)
     end
 
     hit.MouseButton1Click:Connect(function()
@@ -1274,15 +1272,13 @@ local function makeButton(parent, text, onClick, accent)
     b.Size = UDim2.new(1, 0, 0, 32)
     b.BackgroundColor3 = accent and Theme.accent or Theme.card
     b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 11
-    b.TextColor3 = accent and Color3.fromRGB(255, 255, 255) or Theme.text
-    b.Text = text; b.LayoutOrder = nextOrder(); b.Parent = parent; corner(b, 10)
-    local st = softStroke(b, accent and Theme.accent2 or Theme.line, 1, 0.35)
+    b.TextColor3 = accent and Color3.fromRGB(20, 22, 28) or Theme.text
+    b.Text = text; b.LayoutOrder = nextOrder(); b.Parent = parent; corner(b, 8)
     registerThemeSync(function()
         if b.Parent then
             b.BackgroundColor3 = accent and Theme.accent or Theme.card
-            b.TextColor3 = accent and Color3.fromRGB(255, 255, 255) or Theme.text
+            b.TextColor3 = accent and Color3.fromRGB(20, 22, 28) or Theme.text
         end
-        if st.Parent then st.Color = accent and Theme.accent2 or Theme.line end
     end)
     b.MouseButton1Click:Connect(function()
         local ok, err = pcall(onClick, b)
@@ -1302,11 +1298,9 @@ local function makeDropdown(parent, text, options, get, set)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0, 76, 0, 24); btn.Position = UDim2.new(1, -86, 0.5, -12)
     btn.BackgroundColor3 = Theme.cardHi; btn.BorderSizePixel = 0; btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11; btn.TextColor3 = Theme.accent2; btn.Text = get(); btn.Parent = row; corner(btn, 8)
-    local st = softStroke(btn, Theme.line, 1, 0.35)
+    btn.TextSize = 11; btn.TextColor3 = Theme.accent2; btn.Text = get(); btn.Parent = row; corner(btn, 6)
     registerThemeSync(function()
         if btn.Parent then btn.BackgroundColor3 = Theme.cardHi; btn.TextColor3 = Theme.accent2 end
-        if st.Parent then st.Color = Theme.line end
     end)
 
     local idx = 1
@@ -1322,10 +1316,10 @@ local function makeDropdown(parent, text, options, get, set)
 end
 
 local fovCircle = nil
-local statsFrame, statsLabel, statsStroke = nil, nil, nil
+local statsFrame, statsLabel = nil, nil
 
 local function applyTheme(name)
-    local t = THEMES[name] or THEMES.violet
+    local t = THEMES[name] or THEMES.silver
     Theme.bg = t.bg; Theme.card = t.card; Theme.cardHi = t.cardHi; Theme.line = t.line
     Theme.text = t.text; Theme.dim = t.dim; Theme.accent = t.accent; Theme.accent2 = t.accent2
     Theme.neonA = t.neonA; Theme.neonB = t.neonB
@@ -1347,7 +1341,6 @@ local function applyTheme(name)
         if radarBorder then radarBorder.Color = Theme.accent end
         if fovCircle then fovCircle.Color = Theme.accent end
         if statsFrame then statsFrame.BackgroundColor3 = Theme.card end
-        if statsStroke then statsStroke.Color = Theme.line end
         if statsLabel then statsLabel.TextColor3 = Theme.text end
     end)
 
@@ -1393,15 +1386,15 @@ local moveTab = newTab("move")
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function() return state.speed end, function(v) state.speed = v; applySpeed() end, 0)
 makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, function(v) state.jump = v; applyJump() end, 0)
 
-local presetCard = card(moveTab, 36)
+local presetCard = card(moveTab, 34)
 local presetRow = Instance.new("Frame")
-presetRow.Size = UDim2.new(1, -12, 0, 24); presetRow.Position = UDim2.new(0, 6, 0.5, -12); presetRow.BackgroundTransparency = 1; presetRow.Parent = presetCard
+presetRow.Size = UDim2.new(1, -12, 0, 22); presetRow.Position = UDim2.new(0, 6, 0.5, -11); presetRow.BackgroundTransparency = 1; presetRow.Parent = presetCard
 local presetGrid = Instance.new("UIGridLayout")
 presetGrid.CellSize = UDim2.new(0.333, -4, 1, 0); presetGrid.CellPadding = UDim2.new(0.01, 0, 0, 0); presetGrid.Parent = presetRow
 local speeds = { { n = "Normal", v = 16 }, { n = "Sprint", v = 35 }, { n = "Fast", v = 80 } }
 for i, s in ipairs(speeds) do
     local b = Instance.new("TextButton")
-    b.BackgroundColor3 = Theme.cardHi; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.TextColor3 = Theme.text; b.Text = s.n; b.LayoutOrder = i; b.Parent = presetRow; corner(b, 8)
+    b.BackgroundColor3 = Theme.cardHi; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.TextColor3 = Theme.text; b.Text = s.n; b.LayoutOrder = i; b.Parent = presetRow; corner(b, 6)
     registerThemeSync(function() if b.Parent then b.BackgroundColor3 = Theme.cardHi; b.TextColor3 = Theme.text end end)
     b.MouseButton1Click:Connect(function() state.speed = s.v; applySpeed(); syncUI(); notify("speed: " .. s.v, "ok") end)
 end
@@ -1428,7 +1421,7 @@ makeSlider(aimTab, "Trigger FOV", 5, 300, 5, function() return state.triggerFov 
 makeDropdown(aimTab, "Target Priority", { "closest", "lowhp", "threat" }, function() return state.targetMode end, function(v) state.targetMode = v end)
 makeDropdown(aimTab, "Hitbox", { "head", "root", "torso" }, function() return state.hitbox end, function(v) state.hitbox = v end)
 
--- ВКЛАДКА VIS (РАДАР + ESP + УЛУЧШЕННЫЕ ТЕМЫ)
+-- ВКЛАДКА VIS (РАДАР + ESP + ТЕМЫ)
 local visTab = newTab("vis")
 makeSwitch(visTab, "Radar (Top-Right)", function() return state.radar end, function(v) state.radar = v; if not v then hideRadar() end; notify("radar " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSlider(visTab, "Radar range", 40, 400, 10, function() return state.radarRange end, function(v) state.radarRange = v end, 0)
@@ -1441,43 +1434,29 @@ makeSwitch(visTab, "FPS booster", function() return state.fpsBoost end, function
 makeSwitch(visTab, "Spinbot", function() return state.spin end, function(v) state.spin = v; if not v then local root = getHRP(); if root then root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(0, 0, -1)) end end; notify("spinbot " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSlider(visTab, "Spin speed", 1, 30, 1, function() return state.spinSpeed end, function(v) state.spinSpeed = v end, 0)
 
--- Улучшенный интерфейс выбора тем с индикатором текущей темы и акцентной обводкой
-local themeCard = card(visTab, 56)
+local themeNames = { "silver", "pink", "gold", "violet", "cyan", "green", "red" }
+local themeCard = card(visTab, 72)
 local themeLbl = Instance.new("TextLabel")
-themeLbl.Size = UDim2.new(0.55, -10, 0, 15); themeLbl.Position = UDim2.fromOffset(10, 6); themeLbl.BackgroundTransparency = 1; themeLbl.Font = Enum.Font.GothamMedium; themeLbl.TextSize = 11; themeLbl.TextColor3 = Theme.dim; themeLbl.TextXAlignment = Enum.TextXAlignment.Left; themeLbl.Text = "Theme"; themeLbl.Parent = themeCard
+themeLbl.Size = UDim2.new(1, -16, 0, 14); themeLbl.Position = UDim2.fromOffset(8, 5); themeLbl.BackgroundTransparency = 1; themeLbl.Font = Enum.Font.GothamMedium; themeLbl.TextSize = 11; themeLbl.TextColor3 = Theme.dim; themeLbl.TextXAlignment = Enum.TextXAlignment.Left; themeLbl.Text = "Theme"; themeLbl.Parent = themeCard
 registerThemeSync(function() if themeLbl.Parent then themeLbl.TextColor3 = Theme.dim end end)
 
-local themeActiveBadge = Instance.new("TextLabel")
-themeActiveBadge.Size = UDim2.new(0.45, -10, 0, 15); themeActiveBadge.Position = UDim2.new(0.55, 0, 0, 6); themeActiveBadge.BackgroundTransparency = 1; themeActiveBadge.Font = Enum.Font.GothamBold; themeActiveBadge.TextSize = 10; themeActiveBadge.TextColor3 = Theme.accent2; themeActiveBadge.TextXAlignment = Enum.TextXAlignment.Right; themeActiveBadge.Text = string.upper(state.theme); themeActiveBadge.Parent = themeCard
-
 local themeRow = Instance.new("Frame")
-themeRow.Size = UDim2.new(1, -16, 0, 24); themeRow.Position = UDim2.fromOffset(8, 25); themeRow.BackgroundTransparency = 1; themeRow.Parent = themeCard
+themeRow.Size = UDim2.new(1, -16, 0, 44); themeRow.Position = UDim2.fromOffset(8, 22); themeRow.BackgroundTransparency = 1; themeRow.Parent = themeCard
 local themeGrid = Instance.new("UIGridLayout")
-themeGrid.CellSize = UDim2.new(0.25, -5, 1, 0); themeGrid.CellPadding = UDim2.new(0.015, 0, 0, 0); themeGrid.SortOrder = Enum.SortOrder.LayoutOrder; themeGrid.Parent = themeRow
+themeGrid.CellSize = UDim2.new(0.25, -4, 0, 20); themeGrid.CellPadding = UDim2.new(0.01, 0, 0, 4); themeGrid.SortOrder = Enum.SortOrder.LayoutOrder; themeGrid.Parent = themeRow
 
-local themeButtons, themeStrokes = {}, {}
-local themeNames = { "violet", "cyan", "green", "red" }
+local themeButtons = {}
 refreshThemeButtons = function()
-    themeActiveBadge.Text = string.upper(state.theme)
-    themeActiveBadge.TextColor3 = Theme.accent2
     for name, btn in pairs(themeButtons) do
         local on = (state.theme == name)
-        btn.BackgroundTransparency = on and 0 or 0.48
-        btn.TextColor3 = on and Color3.fromRGB(255, 255, 255) or Theme.dim
-        local st = themeStrokes[name]
-        if st and st.Parent then
-            st.Thickness = on and 1.8 or 1
-            st.Transparency = on and 0.05 or 0.55
-            st.Color = on and Color3.fromRGB(255, 255, 255) or THEMES[name].accent2
-        end
+        btn.BackgroundTransparency = on and 0 or 0.45
+        btn.TextColor3 = on and Color3.fromRGB(20, 22, 28) or Theme.dim
     end
 end
 
 for i, name in ipairs(themeNames) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 1, 0); b.BackgroundColor3 = THEMES[name].accent; b.BackgroundTransparency = 0.48; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.TextColor3 = Theme.dim; b.Text = name; b.LayoutOrder = i; b.Parent = themeRow; corner(b, 8)
-    local st = softStroke(b, THEMES[name].accent2, 1, 0.55)
-    themeStrokes[name] = st
+    b.Size = UDim2.new(1, 0, 1, 0); b.BackgroundColor3 = THEMES[name].accent; b.BackgroundTransparency = 0.45; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.TextColor3 = Theme.dim; b.Text = name; b.LayoutOrder = i; b.Parent = themeRow; corner(b, 6)
     b.MouseButton1Click:Connect(function() applyTheme(name); refreshThemeButtons() end)
     themeButtons[name] = b
 end
@@ -1505,8 +1484,7 @@ refreshPlayerList = function()
             local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
             local hp = hum and (math.floor(hum.Health) .. " hp") or "loading"
             local row = Instance.new("TextButton")
-            row.Size = UDim2.new(1, 0, 0, 30); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.AutoButtonColor = true; row.Font = Enum.Font.GothamMedium; row.TextSize = 11; row.TextColor3 = Theme.text; row.TextXAlignment = Enum.TextXAlignment.Left; row.Text = "  " .. plr.Name .. "   " .. hp; row.LayoutOrder = n; row.Parent = playerBox; corner(row, 8)
-            softStroke(row, Theme.line, 1, 0.45)
+            row.Size = UDim2.new(1, 0, 0, 30); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.AutoButtonColor = true; row.Font = Enum.Font.GothamMedium; row.TextSize = 11; row.TextColor3 = Theme.text; row.TextXAlignment = Enum.TextXAlignment.Left; row.Text = "  " .. plr.Name .. "   " .. hp; row.LayoutOrder = n; row.Parent = playerBox; corner(row, 6)
             row.MouseButton1Click:Connect(function()
                 local ok, reason = safeTeleport(plr)
                 if ok then statusLbl.Text = "teleported to " .. plr.Name; notify("tp -> " .. plr.Name, "ok")
@@ -1555,14 +1533,13 @@ refreshWaypointList = function()
     end
     for i, name in ipairs(names) do
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 32); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.LayoutOrder = i; row.Parent = wayBox; corner(row, 8)
-        softStroke(row, Theme.line, 1, 0.45)
+        row.Size = UDim2.new(1, 0, 0, 32); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.LayoutOrder = i; row.Parent = wayBox; corner(row, 6)
 
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(1, -96, 1, 0); lbl.Position = UDim2.fromOffset(8, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 11; lbl.TextColor3 = Theme.text; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = name; lbl.Parent = row
 
         local tpBtn = Instance.new("TextButton")
-        tpBtn.Size = UDim2.fromOffset(40, 24); tpBtn.Position = UDim2.new(1, -88, 0.5, -12); tpBtn.BackgroundColor3 = Theme.accent; tpBtn.BorderSizePixel = 0; tpBtn.Font = Enum.Font.GothamBold; tpBtn.TextSize = 10; tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255); tpBtn.Text = "TP"; tpBtn.Parent = row; corner(tpBtn, 7)
+        tpBtn.Size = UDim2.fromOffset(40, 24); tpBtn.Position = UDim2.new(1, -88, 0.5, -12); tpBtn.BackgroundColor3 = Theme.accent; tpBtn.BorderSizePixel = 0; tpBtn.Font = Enum.Font.GothamBold; tpBtn.TextSize = 10; tpBtn.TextColor3 = Color3.fromRGB(20, 22, 28); tpBtn.Text = "TP"; tpBtn.Parent = row; corner(tpBtn, 6)
         tpBtn.MouseButton1Click:Connect(function()
             local ok, err = tpWaypoint(name)
             wayStatus.Text = ok and ("tp -> " .. name) or ("tp failed: " .. tostring(err))
@@ -1570,7 +1547,7 @@ refreshWaypointList = function()
         end)
 
         local delBtn = Instance.new("TextButton")
-        delBtn.Size = UDim2.fromOffset(40, 24); delBtn.Position = UDim2.new(1, -44, 0.5, -12); delBtn.BackgroundColor3 = Theme.cardHi; delBtn.BorderSizePixel = 0; delBtn.Font = Enum.Font.GothamBold; delBtn.TextSize = 10; delBtn.TextColor3 = Color3.fromRGB(255, 120, 120); delBtn.Text = "del"; delBtn.Parent = row; corner(delBtn, 7)
+        delBtn.Size = UDim2.fromOffset(40, 24); delBtn.Position = UDim2.new(1, -44, 0.5, -12); delBtn.BackgroundColor3 = Theme.cardHi; delBtn.BorderSizePixel = 0; delBtn.Font = Enum.Font.GothamBold; delBtn.TextSize = 10; delBtn.TextColor3 = Color3.fromRGB(255, 120, 120); delBtn.Text = "del"; delBtn.Parent = row; corner(delBtn, 6)
         delBtn.MouseButton1Click:Connect(function()
             deleteWaypoint(name); refreshWaypointList()
             wayStatus.Text = "deleted " .. name; notify("deleted " .. name, "warn")
@@ -1616,8 +1593,7 @@ end
 
 local function serverRow(key, layoutOrder)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 28); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.LayoutOrder = layoutOrder; row.Parent = srvBox; corner(row, 8)
-    softStroke(row, Theme.line, 1, 0.45)
+    row.Size = UDim2.new(1, 0, 0, 28); row.BackgroundColor3 = Theme.card; row.BorderSizePixel = 0; row.LayoutOrder = layoutOrder; row.Parent = srvBox; corner(row, 6)
     registerThemeSync(function() if row.Parent then row.BackgroundColor3 = Theme.card end end)
 
     local k = Instance.new("TextLabel")
@@ -1670,9 +1646,8 @@ end)
 --  7. ГЛАВНЫЙ ЦИКЛ, СОБЫТИЯ И ОЧИСТКА (DESTROY)
 -- ============================================================
 statsFrame = Instance.new("Frame")
-statsFrame.Size = UDim2.fromOffset(216, 26); statsFrame.AnchorPoint = Vector2.new(0.5, 0); statsFrame.Position = UDim2.new(0.5, 0, 0, 8)
-statsFrame.BackgroundColor3 = Theme.card; statsFrame.BorderSizePixel = 0; statsFrame.Visible = false; statsFrame.ZIndex = 20; statsFrame.Parent = gui; corner(statsFrame, 10)
-statsStroke = softStroke(statsFrame, Theme.line, 1.1, 0.3)
+statsFrame.Size = UDim2.fromOffset(214, 24); statsFrame.AnchorPoint = Vector2.new(0.5, 0); statsFrame.Position = UDim2.new(0.5, 0, 0, 8)
+statsFrame.BackgroundColor3 = Theme.card; statsFrame.BorderSizePixel = 0; statsFrame.Visible = false; statsFrame.ZIndex = 20; statsFrame.Parent = gui; corner(statsFrame, 7)
 
 statsLabel = Instance.new("TextLabel")
 statsLabel.Size = UDim2.new(1, 0, 1, 0); statsLabel.BackgroundTransparency = 1; statsLabel.Font = Enum.Font.GothamBold; statsLabel.TextSize = 10; statsLabel.TextColor3 = Theme.text; statsLabel.Text = "FPS -- | -- ms | -- MB"; statsLabel.Parent = statsFrame
@@ -1706,7 +1681,7 @@ local function frameStep(dt)
     if destroyed then return end
     statFrames = statFrames + 1
 
-    -- Плавное вращение градиентов неоновой рамки и мягкого свечения
+    -- Переливание неоновой рамки меню и кнопки
     neonAngle = (neonAngle + dt * 95) % 360
     mainNeonGrad.Rotation = neonAngle
     mainGlowGrad.Rotation = (neonAngle + 180) % 360
