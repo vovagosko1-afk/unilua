@@ -1,7 +1,7 @@
 --[[
-    Aero v2.8 Mobile - full merged build
-    base 2.7.6 + freecam + orbit + anti-afk + auto-rejoin + fixes
-    touch-first, delta-safe
+    Aero v2.7.6 - 2.7 Base + 2.7.1 Features
+    - Added: Improved FPS Booster, Speed Presets, ESP Tool Info.
+    - Kept: Configs, Server Hop, Iridescent frames.
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -22,17 +22,6 @@ local SoundService     = game:GetService("SoundService")
 local LP = Players.LocalPlayer
 if not LP then return end
 
-local function safeClear(t)
-    if table and table.clear then pcall(table.clear, t)
-    else for k in pairs(t) do t[k] = nil end end
-end
-local function clamp(v, a, b)
-    if math and math.clamp then return math.clamp(v, a, b) end
-    if v < a then return a end
-    if v > b then return b end
-    return v
-end
-
 local DrawingLib = nil
 pcall(function()
     local ok, v = pcall(function() return Drawing.new end)
@@ -48,9 +37,6 @@ local state = {
     stats = false, fpsBoost = false, bhop = false,
     spin = false, spinSpeed = 8, theme = "violet",
     visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
-    freecam = false, freecamSpeed = 40,
-    orbit = false, orbitDist = 18, orbitHeight = 3,
-    antiAfk = false, autoRejoin = false,
 }
 
 local destroyed = false
@@ -64,6 +50,11 @@ local function getHRP()
     local c = getChar()
     if not c then return nil end
     return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart
+end
+local function clamp(v, a, b)
+    if v < a then return a end
+    if v > b then return b end
+    return v
 end
 
 -- ============================================================
@@ -142,14 +133,14 @@ local function setBhop(on)
 end
 
 -- ============================================================
---  spinbot (fps-fixed)
+--  spinbot
 -- ============================================================
 local spinAngle = 0
 local function spinStep(dt)
     if not state.spin then return end
     local root, h = getHRP(), getHum()
     if not root or not h or h.Health <= 0 then return end
-    spinAngle = (spinAngle + math.rad(state.spinSpeed) * dt) % (math.pi * 2)
+    spinAngle = (spinAngle + math.rad(state.spinSpeed) * dt * 60) % (math.pi * 2)
     root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(math.sin(spinAngle), 0, math.cos(spinAngle)))
 end
 
@@ -172,7 +163,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster
+--  fps booster (Improved from 2.7.1)
 -- ============================================================
 local boostState = nil
 local function setFpsBoost(on)
@@ -188,9 +179,11 @@ local function setFpsBoost(on)
         if ql then pcall(function() settings().Rendering.QualityLevel = 1 end) end
         pcall(function() settings().Rendering.MeshPartDetail = 1 end)
         pcall(function() settings().Rendering.TextureQuality = 1 end)
+        
         Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0
         Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
         Lighting.FogEnd = 1e6
+        
         local ok, list = pcall(function() return workspace:GetDescendants() end)
         if ok then
             for _, inst in ipairs(list) do
@@ -312,7 +305,7 @@ local function serverHop()
 end
 
 -- ============================================================
---  aimbot
+--  aimbot (improved)
 -- ============================================================
 local function hitboxPart(char)
     if state.hitbox == "root" then return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
@@ -340,7 +333,7 @@ local function scoreTarget(head, hum, cam, center, mode)
     elseif mode == "threat" then return dist * 0.7 + hum.Health * 0.3 end
     return dist
 end
-local function pickTarget(fov, requireVisible)
+local function pickTarget(fov)
     local cam = workspace.CurrentCamera; if not cam then return nil end
     fov = fov or state.fov
     local center = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
@@ -361,7 +354,7 @@ local function pickTarget(fov, requireVisible)
                     local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
                     if d <= fov then
                         local okVisible = true
-                        if requireVisible or state.visibleCheck then
+                        if state.visibleCheck then
                             local filter = table.clone(baseFilter); table.insert(filter, c)
                             okVisible = isVisible(hb, cam.CFrame.Position, filter)
                         end
@@ -398,8 +391,7 @@ end
 local function triggerStep()
     if not state.triggerbot then return end
     local now = os.clock(); if now - lastTrigger < 0.1 then return end
-    -- require visible target for trigger
-    if pickTarget(state.triggerFov, true) then lastTrigger = now; fireWeapon() end
+    if pickTarget(state.triggerFov) then lastTrigger = now; fireWeapon() end
 end
 
 -- ============================================================
@@ -461,12 +453,16 @@ local function espStep()
                         local h = math.abs(bottom.Y - top.Y); if h < 6 then h = 6 end; local w = h * 0.55
                         item.box.Color = color; item.box.Size = Vector2.new(w, h); item.box.Position = Vector2.new(top.X - w * 0.5, top.Y); item.box.Visible = true
                         item.name.Color = color; item.name.Text = plr.Name; item.name.Position = Vector2.new(top.X, top.Y - 16); item.name.Visible = true
+                        
+                        -- ESP Tool Info (from 2.7.1)
                         local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
                         local tool = c:FindFirstChildOfClass("Tool")
                         local toolName = tool and tool.Name or "Unarmed"
                         if #toolName > 15 then toolName = string.sub(toolName, 1, 13) .. ".." end
+                        
                         item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m | %d hp | %s", dist, math.floor(hum.Health), toolName)
                         item.info.Position = Vector2.new(top.X, top.Y + h + 2); item.info.Visible = true
+                        
                         if state.espHealth then
                             local frac = clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                             local barX = top.X - w * 0.5 - 7
@@ -481,237 +477,6 @@ local function espStep()
     end
     for plr, item in pairs(espItems) do if not seen[plr] then hideItem(item) end end
     for plr, hl in pairs(espHighlights) do if not seen[plr] and hl and hl.Parent then hl.Enabled = false end end
-end
-
--- ============================================================
---  freecam (touch)
--- ============================================================
-local fc = {
-    active = false,
-    cam = nil,
-    cframe = CFrame.new(),
-    vel = Vector3.zero,
-    inputConns = {},
-    savedCamType = nil,
-    savedSubject = nil,
-    savedFov = nil,
-    pad = { f = 0, b = 0, l = 0, r = 0, u = 0, d = 0, boost = false },
-    drag = { active = false, last = nil, id = nil },
-}
-local function fcSaveCamera()
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    fc.savedCamType = cam.CameraType
-    fc.savedSubject = cam.CameraSubject
-    fc.savedFov = cam.FieldOfView
-end
-local function fcRestoreCamera()
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    if fc.savedCamType then cam.CameraType = fc.savedCamType end
-    if fc.savedSubject then pcall(function() cam.CameraSubject = fc.savedSubject end) end
-    if fc.savedFov then cam.FieldOfView = fc.savedFov end
-    fc.savedCamType = nil; fc.savedSubject = nil; fc.savedFov = nil
-end
-local function fcTouchBegan(input)
-    if not fc.active then return end
-    if input.UserInputType ~= Enum.UserInputType.Touch then return end
-    if fc.drag.active then return end
-    fc.drag.active = true; fc.drag.id = input; fc.drag.last = input.Position
-end
-local function fcTouchChanged(input)
-    if not fc.active or not fc.drag.active or input ~= fc.drag.id then return end
-    local delta = input.Position - fc.drag.last
-    fc.drag.last = input.Position
-    local yaw = -delta.X * 0.005
-    local pitch = -delta.Y * 0.005
-    local newCF = fc.cframe * CFrame.Angles(pitch, yaw, 0)
-    local look = newCF.LookVector
-    local flat = Vector3.new(look.X, 0, look.Z)
-    if flat.Magnitude < 1e-3 then flat = Vector3.new(0, 0, -1) end
-    local clampedLook = Vector3.new(flat.Unit.X, clamp(look.Y, -0.98, 0.98), flat.Unit.Z).Unit
-    fc.cframe = CFrame.lookAt(fc.cframe.Position, fc.cframe.Position + clampedLook)
-end
-local function fcTouchEnded(input)
-    if input == fc.drag.id then
-        fc.drag.active = false; fc.drag.id = nil; fc.drag.last = nil
-    end
-end
-local function fcStart()
-    if fc.active then return end
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    fcSaveCamera()
-    fc.cam = cam; fc.cframe = cam.CFrame; fc.vel = Vector3.zero
-    cam.CameraType = Enum.CameraType.Scriptable
-    cam.CameraSubject = nil
-    fc.active = true
-    for k in pairs(fc.pad) do if type(fc.pad[k]) == "number" then fc.pad[k] = 0 end end
-    fc.pad.boost = false
-    fc.inputConns[#fc.inputConns + 1] = UserInputService.InputBegan:Connect(fcTouchBegan)
-    fc.inputConns[#fc.inputConns + 1] = UserInputService.InputChanged:Connect(fcTouchChanged)
-    fc.inputConns[#fc.inputConns + 1] = UserInputService.InputEnded:Connect(fcTouchEnded)
-    notify("freecam on", "ok")
-end
-local function fcStop()
-    if not fc.active then return end
-    fc.active = false; fc.drag.active = false; fc.drag.id = nil
-    for k in pairs(fc.pad) do if type(fc.pad[k]) == "number" then fc.pad[k] = 0 end end
-    fc.pad.boost = false
-    for _, c in ipairs(fc.inputConns) do pcall(function() c:Disconnect() end) end
-    safeClear(fc.inputConns)
-    fcRestoreCamera()
-    fc.cam = nil
-    notify("freecam off", "info")
-end
-local function fcStep(dt)
-    if not fc.active then return end
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    local look = cam.CFrame.LookVector
-    local right = cam.CFrame.RightVector
-    local up = Vector3.new(0, 1, 0)
-    local move = Vector3.zero
-    if fc.pad.f > 0 then move = move + look end
-    if fc.pad.b > 0 then move = move - look end
-    if fc.pad.r > 0 then move = move + right end
-    if fc.pad.l > 0 then move = move - right end
-    if fc.pad.u > 0 then move = move + up end
-    if fc.pad.d > 0 then move = move - up end
-    local speed = state.freecamSpeed
-    if fc.pad.boost then speed = speed * 3 end
-    if move.Magnitude > 1e-3 then move = move.Unit * speed end
-    fc.vel = fc.vel:Lerp(move, clamp(dt * 12, 0, 1))
-    fc.cframe = fc.cframe + fc.vel * dt
-    cam.CFrame = fc.cframe
-end
-local function setFreecam(on)
-    if on then fcStart() else fcStop() end
-    state.freecam = on
-end
-
--- ============================================================
---  orbit camera (touch)
--- ============================================================
-local orbit = {
-    active = false, angle = 0, pitch = math.rad(-10),
-    savedType = nil, savedSubject = nil, savedFov = nil,
-    drag = { active = false, last = nil, id = nil }, conns = {},
-}
-local function orbitStart()
-    if orbit.active then return end
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    orbit.savedType = cam.CameraType
-    orbit.savedSubject = cam.CameraSubject
-    orbit.savedFov = cam.FieldOfView
-    cam.CameraType = Enum.CameraType.Scriptable
-    cam.CameraSubject = nil
-    orbit.active = true; orbit.angle = 0
-    orbit.conns[#orbit.conns + 1] = UserInputService.InputBegan:Connect(function(input)
-        if not orbit.active then return end
-        if input.UserInputType ~= Enum.UserInputType.Touch then return end
-        if orbit.drag.active then return end
-        orbit.drag.active = true; orbit.drag.id = input; orbit.drag.last = input.Position
-    end)
-    orbit.conns[#orbit.conns + 1] = UserInputService.InputChanged:Connect(function(input)
-        if not orbit.active or not orbit.drag.active or input ~= orbit.drag.id then return end
-        local d = input.Position - orbit.drag.last
-        orbit.drag.last = input.Position
-        orbit.angle = orbit.angle + d.X * 0.01
-        orbit.pitch = clamp(orbit.pitch + d.Y * 0.01, math.rad(-70), math.rad(20))
-    end)
-    orbit.conns[#orbit.conns + 1] = UserInputService.InputEnded:Connect(function(input)
-        if input == orbit.drag.id then
-            orbit.drag.active = false; orbit.drag.id = nil; orbit.drag.last = nil
-        end
-    end)
-    notify("orbit on", "ok")
-end
-local function orbitStop()
-    if not orbit.active then return end
-    orbit.active = false; orbit.drag.active = false; orbit.drag.id = nil
-    for _, c in ipairs(orbit.conns) do pcall(function() c:Disconnect() end) end
-    safeClear(orbit.conns)
-    local cam = workspace.CurrentCamera
-    if cam then
-        if orbit.savedType then cam.CameraType = orbit.savedType end
-        if orbit.savedSubject then pcall(function() cam.CameraSubject = orbit.savedSubject end) end
-        if orbit.savedFov then cam.FieldOfView = orbit.savedFov end
-    end
-    notify("orbit off", "info")
-end
-local function orbitStep(dt)
-    if not orbit.active then return end
-    local cam = workspace.CurrentCamera
-    local root = getHRP()
-    if not cam or not root then return end
-    local center = root.Position + Vector3.new(0, state.orbitHeight, 0)
-    local x = math.sin(orbit.angle) * state.orbitDist
-    local z = math.cos(orbit.angle) * state.orbitDist
-    local y = math.sin(orbit.pitch) * state.orbitDist
-    local target = center + Vector3.new(x, y, z)
-    cam.CFrame = CFrame.lookAt(target, center)
-end
-local function setOrbit(on)
-    if on then orbitStart() else orbitStop() end
-    state.orbit = on
-end
-
--- ============================================================
---  anti-afk / auto-rejoin (mobile)
--- ============================================================
-local afk = { active = false, conn = nil, rejoining = false }
-local function afkTick()
-    if not afk.active or destroyed then return end
-    local h = getHum()
-    if h and h.Health > 0 then
-        pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
-    end
-    local cam = workspace.CurrentCamera
-    if cam then
-        local cf = cam.CFrame
-        cam.CFrame = cf * CFrame.Angles(0, math.rad(0.5), 0)
-        task.wait(0.05)
-        cam.CFrame = cf
-    end
-end
-local function setAntiAfk(on)
-    state.antiAfk = on; afk.active = on
-    if on then
-        if not afk.conn then
-            afk.conn = task.spawn(function()
-                while afk.active and not destroyed do
-                    afkTick()
-                    task.wait(45)
-                end
-            end)
-        end
-        notify("anti-afk on", "ok")
-    else
-        if afk.conn then pcall(function() task.cancel(afk.conn) end); afk.conn = nil end
-        notify("anti-afk off", "info")
-    end
-end
-local function setAutoRejoin(on)
-    state.autoRejoin = on
-    notify(on and "auto-rejoin armed" or "auto-rejoin off", on and "ok" or "info")
-end
-local function autoRejoinWatch()
-    if not state.autoRejoin or afk.rejoining then return end
-    local pg = LP:FindFirstChild("PlayerGui")
-    if not pg then return end
-    for _, v in ipairs(pg:GetDescendants()) do
-        if v:IsA("TextButton") or v:IsA("TextLabel") then
-            local t = string.lower(v.Text or "")
-            if t:find("disconnected") or t:find("reconnect") or t:find("connection lost") then
-                afk.rejoining = true
-                task.wait(2)
-                pcall(rejoin)
-                break
-            end
-        end
-    end
 end
 
 -- ============================================================
@@ -740,6 +505,7 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "Aero"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; gui.DisplayOrder = 1000
 gui.Parent = resolveGuiParent(); if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
 
+-- toasts
 local toastHolder = Instance.new("Frame")
 toastHolder.Size = UDim2.new(0, 260, 0, 400); toastHolder.AnchorPoint = Vector2.new(1, 0); toastHolder.Position = UDim2.new(1, -12, 0, 12)
 toastHolder.BackgroundTransparency = 1; toastHolder.ZIndex = 50; toastHolder.Parent = gui
@@ -774,6 +540,7 @@ notify = function(text, kind, duration)
     end)
 end
 
+-- panel
 local PANEL_W, PANEL_H, TAB_BAR_H = 300, 440, 46
 local main = Instance.new("Frame"); main.Name = "AeroMain"; main.Size = UDim2.fromOffset(PANEL_W, PANEL_H); main.Position = UDim2.fromOffset(16, 80); main.BackgroundColor3 = Theme.bg; main.BorderSizePixel = 0; main.Active = true; main.ClipsDescendants = true; main.ZIndex = 10; main.Parent = gui; corner(main, 16)
 
@@ -782,6 +549,7 @@ local mainGradient = Instance.new("UIGradient"); mainGradient.Parent = mainStrok
 local mainGlow = Instance.new("UIStroke"); mainGlow.Color = Theme.neonB; mainGlow.Thickness = 6; mainGlow.Transparency = 0.85; mainGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; mainGlow.Parent = main
 local mainGlowGradient = Instance.new("UIGradient"); mainGlowGradient.Parent = mainGlow
 
+-- reopen (small toggle)
 local reopen = Instance.new("TextButton"); reopen.Name = "AeroToggle"; reopen.Size = UDim2.fromOffset(44, 44); reopen.Position = UDim2.fromOffset(16, 16); reopen.BackgroundColor3 = Theme.bg; reopen.BackgroundTransparency = 0.1; reopen.BorderSizePixel = 0; reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 11; reopen.TextColor3 = Theme.accent2; reopen.Text = "aero"; reopen.AutoButtonColor = false; reopen.ZIndex = 10; reopen.Parent = gui; corner(reopen, 22)
 local reopenStroke = Instance.new("UIStroke"); reopenStroke.Color = Theme.neonA; reopenStroke.Thickness = 2; reopenStroke.Transparency = 0.05; reopenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; reopenStroke.Parent = reopen
 local reopenGradient = Instance.new("UIGradient"); reopenGradient.Parent = reopenStroke
@@ -789,6 +557,7 @@ local reopenGlow = Instance.new("UIStroke"); reopenGlow.Color = Theme.neonB; reo
 local reopenGlowGradient = Instance.new("UIGradient"); reopenGlowGradient.Parent = reopenGlow
 local reopenUserMoved = false
 
+-- iridescent setup
 local iridescentOffset = 0
 local function updateIridescentGradient(gradient, baseColor)
     local lighter = Color3.new(math.min(baseColor.R * 1.5, 1), math.min(baseColor.G * 1.5, 1), math.min(baseColor.B * 1.5, 1))
@@ -812,10 +581,11 @@ end
 
 task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteSize.X > 10 and gui.AbsoluteSize.Y > 10 then break end; task.wait(0.1) end; pcall(layoutPanel) end)
 
+-- header
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.8"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.6"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -829,7 +599,7 @@ local tabBarLine = Instance.new("Frame"); tabBarLine.Size = UDim2.new(1, 0, 0, 1
 local content = Instance.new("Frame"); content.Size = UDim2.new(1, 0, 1, -(40 + TAB_BAR_H)); content.Position = UDim2.fromOffset(0, 40); content.BackgroundTransparency = 1; content.Parent = main
 
 local tabs, tabButtons = {}, {}
-local activeTab, refreshPlayerList, refreshWaypointList, refreshServerInfo, refreshThemeButtons = nil, nil, nil, nil, nil
+local activeTab, refreshPlayerList, refreshWaypointList, refreshServerInfo = nil, nil, nil, nil
 
 local function newTab(id)
     local sf = Instance.new("ScrollingFrame"); sf.Size = UDim2.new(1, 0, 1, 0); sf.BackgroundTransparency = 1; sf.BorderSizePixel = 0; sf.ScrollBarThickness = 2; sf.ScrollBarImageColor3 = Theme.line; sf.CanvasSize = UDim2.new(0, 0, 0, 0); sf.AutomaticCanvasSize = Enum.AutomaticSize.Y; sf.ScrollingDirection = Enum.ScrollingDirection.Y; sf.Visible = false; sf.Parent = content
@@ -862,6 +632,7 @@ for i, def in ipairs(tabDefs) do
     b.MouseButton1Click:Connect(function() showTab(def[1]) end); tabButtons[def[1]] = b
 end
 
+-- drag
 local dragging, dragStart, dragOrigin, btnDragging, btnStart, btnOrigin, btnMoved = false, nil, nil, false, nil, nil, 0
 local function isPrimaryInput(input) return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch end
 
@@ -892,6 +663,7 @@ local dragConn = UserInputService.InputChanged:Connect(function(input)
     main.Position = UDim2.new(0, clamp(dragOrigin.X.Offset + delta.X, -(PANEL_W - 80), sw - 80), 0, clamp(dragOrigin.Y.Offset + delta.Y, -(PANEL_H - 90), sh - 90))
 end)
 
+-- widgets
 local uiRefreshers, uiOrder = {}, 0
 local function nextOrder() uiOrder = uiOrder + 1; return uiOrder end
 local function syncUI() for _, f in ipairs(uiRefreshers) do pcall(f) end end
@@ -964,8 +736,12 @@ local function applyTheme(name)
     pcall(refreshTabStyles); pcall(syncUI); if notify then notify("theme: " .. name, "ok") end
 end
 
+-- config system
 local function saveConfig()
-    local cfg = { state = state, waypoints = {} }
+    local cfg = {
+        state = state,
+        waypoints = {}
+    }
     for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
     local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
     if ok then
@@ -979,12 +755,14 @@ local function loadConfig()
     if not rOk or not content then notify("config not found", "warn") return end
     local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
     if dOk and type(cfg) == "table" then
-        if cfg.state then for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end end
+        if cfg.state then
+            for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
+        end
         if cfg.waypoints then
             for k in pairs(waypoints) do waypoints[k] = nil end
             for k, v in pairs(cfg.waypoints) do waypoints[k] = Vector3.new(v.x, v.y, v.z) end
         end
-        applyStats(); applyTheme(state.theme); syncUI(); if refreshWaypointList then refreshWaypointList() end; if refreshThemeButtons then refreshThemeButtons() end
+        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList(); refreshThemeButtons()
         notify("config loaded", "ok")
     else notify("decode failed", "err") end
 end
@@ -994,6 +772,7 @@ local moveTab = newTab("move")
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function() return state.speed end, function(v) state.speed = v; applySpeed() end, 0)
 makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, function(v) state.jump = v; applyJump() end, 0)
 
+-- Speed Presets (from 2.7.1)
 local presetCard = Instance.new("Frame")
 presetCard.Size = UDim2.new(1, 0, 0, 36); presetCard.BackgroundColor3 = Theme.card; presetCard.BorderSizePixel = 0; presetCard.LayoutOrder = nextOrder(); presetCard.Parent = moveTab; corner(presetCard, 10)
 local presetRow = Instance.new("Frame")
@@ -1019,7 +798,9 @@ makeHold(pad, "-", function() flyInput.d = 1 end, function() flyInput.d = 0 end,
 makeHold(pad, "<", function() flyInput.l = 1 end, function() flyInput.l = 0 end, 4)
 makeHold(pad, "x", function() clearFlyInput() end, function() end, 5)
 makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 6)
-makeHold(pad, "v", function() flyInput.b = 1 end, function() flyInput.b = 0 end, 7)
+makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 7)
+makeHold(pad, "v", function() flyInput.b = 1 end, function() flyInput.b = 0 end, 8)
+makeHold(pad, "x", function() clearFlyInput() end, function() end, 9)
 makeSlider(moveTab, "Fly speed", 10, 400, 5, function() return state.flySpeed end, function(v) state.flySpeed = v end, 0)
 makeSwitch(moveTab, "Click TP", function() return state.clickTp end, function(v) state.clickTp = v; notify("click tp " .. (v and "on" or "off"), v and "ok" or "info") end)
 
@@ -1047,20 +828,12 @@ makeSwitch(visTab, "FPS booster", function() return state.fpsBoost end, function
 makeSwitch(visTab, "Spinbot", function() return state.spin end, function(v) state.spin = v; if not v then local root = getHRP(); if root then root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(0, 0, -1)) end end; notify("spinbot " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSlider(visTab, "Spin speed", 1, 30, 1, function() return state.spinSpeed end, function(v) state.spinSpeed = v end, 0)
 
-makeSwitch(visTab, "Freecam", function() return state.freecam end, function(v) setFreecam(v) end)
-makeSlider(visTab, "Freecam speed", 10, 300, 10, function() return state.freecamSpeed end, function(v) state.freecamSpeed = v end, 0)
-makeSwitch(visTab, "Orbit camera", function() return state.orbit end, function(v) setOrbit(v) end)
-makeSlider(visTab, "Orbit distance", 5, 60, 1, function() return state.orbitDist end, function(v) state.orbitDist = v end, 0)
-makeSlider(visTab, "Orbit height", -10, 20, 1, function() return state.orbitHeight end, function(v) state.orbitHeight = v end, 0)
-makeSwitch(visTab, "Anti-AFK", function() return state.antiAfk end, function(v) setAntiAfk(v) end)
-makeSwitch(visTab, "Auto-rejoin", function() return state.autoRejoin end, function(v) setAutoRejoin(v) end)
-
 local themeCard = Instance.new("Frame"); themeCard.Size = UDim2.new(1, 0, 0, 52); themeCard.BackgroundColor3 = Theme.card; themeCard.BorderSizePixel = 0; themeCard.LayoutOrder = nextOrder(); themeCard.Parent = visTab; corner(themeCard, 10)
 local themeLbl = Instance.new("TextLabel"); themeLbl.Size = UDim2.new(1, -20, 0, 16); themeLbl.Position = UDim2.fromOffset(12, 6); themeLbl.BackgroundTransparency = 1; themeLbl.Font = Enum.Font.GothamMedium; themeLbl.TextSize = 12; themeLbl.TextColor3 = Theme.dim; themeLbl.TextXAlignment = Enum.TextXAlignment.Left; themeLbl.Text = "Theme"; themeLbl.Parent = themeCard
 local themeRow = Instance.new("Frame"); themeRow.Size = UDim2.new(1, -20, 0, 22); themeRow.Position = UDim2.fromOffset(10, 24); themeRow.BackgroundTransparency = 1; themeRow.Parent = themeCard
 local themeGrid = Instance.new("UIGridLayout"); themeGrid.CellSize = UDim2.new(0.25, -4, 1, 0); themeGrid.CellPadding = UDim2.new(0.01, 0, 0, 0); themeGrid.SortOrder = Enum.SortOrder.LayoutOrder; themeGrid.Parent = themeRow
 local themeButtons = {}; local themeNames = { "violet", "cyan", "green", "red" }
-refreshThemeButtons = function() for name, btn in pairs(themeButtons) do local on = (state.theme == name); btn.BackgroundTransparency = on and 0 or 0.35; btn.TextColor3 = on and Color3.fromRGB(255, 255, 255) or Theme.dim end end
+local function refreshThemeButtons() for name, btn in pairs(themeButtons) do local on = (state.theme == name); btn.BackgroundTransparency = on and 0 or 0.35; btn.TextColor3 = on and Color3.fromRGB(255, 255, 255) or Theme.dim end end
 for i, name in ipairs(themeNames) do
     local b = Instance.new("TextButton"); b.Size = UDim2.new(1, 0, 1, 0); b.BackgroundColor3 = THEMES[name].accent; b.BackgroundTransparency = 0.35; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.TextColor3 = Theme.dim; b.Text = name; b.LayoutOrder = i; b.Parent = themeRow; corner(b, 7)
     b.MouseButton1Click:Connect(function() applyTheme(name); refreshThemeButtons() end); themeButtons[name] = b
@@ -1069,73 +842,6 @@ refreshThemeButtons()
 
 local configSaveBtn = makeButton(visTab, "Save Config", saveConfig, true); configSaveBtn.LayoutOrder = nextOrder()
 local configLoadBtn = makeButton(visTab, "Load Config", loadConfig, false); configLoadBtn.LayoutOrder = nextOrder()
-
--- freecam pad
-local fcPad = Instance.new("Frame")
-fcPad.Name = "AeroFcPad"
-fcPad.Size = UDim2.fromOffset(140, 140)
-fcPad.AnchorPoint = Vector2.new(1, 1)
-fcPad.Position = UDim2.new(1, -20, 1, -20)
-fcPad.BackgroundColor3 = Theme.card
-fcPad.BackgroundTransparency = 0.25
-fcPad.BorderSizePixel = 0
-fcPad.Visible = false
-fcPad.Active = true
-fcPad.ZIndex = 40
-fcPad.Parent = gui
-corner(fcPad, 70)
-local fcPadStroke = Instance.new("UIStroke")
-fcPadStroke.Color = Theme.accent
-fcPadStroke.Thickness = 1.5
-fcPadStroke.Transparency = 0.2
-fcPadStroke.Parent = fcPad
-local fcCenter = Instance.new("Frame")
-fcCenter.Size = UDim2.fromOffset(8, 8)
-fcCenter.AnchorPoint = Vector2.new(0.5, 0.5)
-fcCenter.Position = UDim2.new(0.5, 0, 0.5, 0)
-fcCenter.BackgroundColor3 = Theme.accent
-fcCenter.BorderSizePixel = 0
-fcCenter.Parent = fcPad
-corner(fcCenter, 4)
-local function fcPadBtn(text, x, y, onDown, onUp, sz)
-    sz = sz or 38
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(sz, sz)
-    b.AnchorPoint = Vector2.new(0.5, 0.5)
-    b.Position = UDim2.new(0.5, x, 0.5, y)
-    b.BackgroundColor3 = Theme.cardHi
-    b.BackgroundTransparency = 0.15
-    b.BorderSizePixel = 0
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 16
-    b.TextColor3 = Theme.text
-    b.Text = text
-    b.AutoButtonColor = false
-    b.ZIndex = 41
-    b.Parent = fcPad
-    corner(b, math.floor(sz * 0.5))
-    b.InputBegan:Connect(function(input)
-        if destroyed then return end
-        if input.UserInputType ~= Enum.UserInputType.Touch then return end
-        b.BackgroundColor3 = Theme.accent
-        onDown()
-    end)
-    b.InputEnded:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.Touch then return end
-        b.BackgroundColor3 = Theme.cardHi
-        onUp()
-    end)
-    return b
-end
-fcPadBtn("^", 0, -48, function() fc.pad.f = 1 end, function() fc.pad.f = 0 end)
-fcPadBtn("v", 0, 48, function() fc.pad.b = 1 end, function() fc.pad.b = 0 end)
-fcPadBtn("<", -48, 0, function() fc.pad.l = 1 end, function() fc.pad.l = 0 end)
-fcPadBtn(">", 48, 0, function() fc.pad.r = 1 end, function() fc.pad.r = 0 end)
-fcPadBtn("+", 0, -100, function() fc.pad.u = 1 end, function() fc.pad.u = 0 end, 32)
-fcPadBtn("-", 0, 100, function() fc.pad.d = 1 end, function() fc.pad.d = 0 end, 32)
-fcPadBtn("x3", 0, 0, function() fc.pad.boost = true end, function() fc.pad.boost = false end, 34)
-local function syncFcPad() fcPad.Visible = state.freecam end
-table.insert(uiRefreshers, syncFcPad)
 
 -- PLAY
 local playersTab = newTab("players")
@@ -1251,26 +957,8 @@ local function frameStep(dt)
     mainGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
     reopenGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
 
-    if state.aimbot and not state.freecam and not state.orbit then aimStep(dt) end
-    if state.triggerbot and not state.freecam then triggerStep() end
-    if state.fly and not state.freecam then flyStep() end
-    if state.spin then spinStep(dt) end
-    if state.freecam then fcStep(dt) end
-    if state.orbit then orbitStep(dt) end
-    if state.esp or next(espItems) or next(espHighlights) then espStep() end
-
-    if fovCircle then
-        local cam = workspace.CurrentCamera
-        if state.aimbot and cam and not state.freecam then
-            fovCircle.Position = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
-            fovCircle.Radius = state.fov
-            fovCircle.Visible = true
-        else
-            fovCircle.Visible = false
-        end
-    end
-
-    autoRejoinWatch()
+    if state.aimbot then aimStep(dt) end; if state.triggerbot then triggerStep() end; if state.fly then flyStep() end; if state.spin then spinStep(dt) end; if state.esp or next(espItems) or next(espHighlights) then espStep() end
+    if fovCircle then local cam = workspace.CurrentCamera; if state.aimbot and cam then fovCircle.Position = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5); fovCircle.Radius = state.fov; fovCircle.Visible = true else fovCircle.Visible = false end end
 end
 local bound = pcall(function() RunService:UnbindFromRenderStep("AeroFrame"); RunService:BindToRenderStep("AeroFrame", Enum.RenderPriority.Camera.Value + 1, frameStep) end); if not bound then RunService.RenderStepped:Connect(frameStep) end
 
@@ -1298,24 +986,14 @@ destroy = function()
     if destroyed then return end; destroyed = true
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
     for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn, jumpConn, charConn, camConn, bhopConn }) do if conn then pcall(function() conn:Disconnect() end) end end
-    pcall(fcStop); pcall(orbitStop)
-    pcall(function() if afk.conn then task.cancel(afk.conn) end end); afk.active = false
     pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(clearESP); pcall(setFullbright, false); pcall(setFpsBoost, false)
-    if fovCircle then pcall(function() fovCircle:Remove() end) end
-    if fcPad then pcall(function() fcPad:Destroy() end) end
-    pcall(function() gui:Destroy() end)
-    state.esp = false; state.spin = false; state.freecam = false; state.orbit = false
+    if fovCircle then pcall(function() fovCircle:Remove() end) end; pcall(function() gui:Destroy() end)
+    state.esp = false; state.spin = false
     if getgenv then getgenv().__Aero = nil end
 end
 
 if getgenv then
-    getgenv().__Aero = {
-        destroy = destroy, state = state, notify = notify, applyTheme = applyTheme,
-        themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop,
-        waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo,
-        saveConfig = saveConfig, loadConfig = loadConfig,
-        setFreecam = setFreecam, setOrbit = setOrbit, setAntiAfk = setAntiAfk, setAutoRejoin = setAutoRejoin,
-    }
+    getgenv().__Aero = { destroy = destroy, state = state, notify = notify, applyTheme = applyTheme, themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop, waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo, saveConfig = saveConfig, loadConfig = loadConfig }
 end
 
 applyTheme(state.theme)
