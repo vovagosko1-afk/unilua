@@ -1,5 +1,5 @@
 --[[
-    Aero v2.7.6 (Radar + Iridescent Neon + Full Theme Sync + Joystick Fly)
+    Aero v2.8 (Radar + Iridescent Neon + Full Theme Sync + Joystick Fly)
     Разделы кода:
       1. Сервисы, состояние (state) и вспомогательные функции
       2. Движение, полет через джойстик, BHOP и Spinbot
