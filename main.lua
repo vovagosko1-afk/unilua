@@ -1,12 +1,12 @@
 --[[
-    Aero v2.7.6 (Radar + Iridescent Neon + Full Theme Sync + Joystick Fly + Silver/Pink/Gold Themes)
+    Aero v2.7.6 (Radar + Iridescent Neon + Full Theme Sync + Joystick Fly + Silver/Pink/Gold + Chat Spam)
     Разделы кода:
       1. Сервисы, состояние (state) и вспомогательные функции
       2. Движение, полет через джойстик, BHOP и Spinbot
-      3. Освещение, FPS Boost и телепортация / сервера
+      3. Освещение, FPS Boost, телепортация / сервера и спам в чат
       4. Аимбот, триггербот и ESP
       5. Радар в правом верхнем углу
-      6. Интерфейс, переливающаяся рамка и полная смена тем (Silver, Pink, Gold)
+      6. Интерфейс, переливающаяся рамка, темы и поле ввода спам-слова
       7. Главный цикл, события и очистка (destroy)
 ]]
 
@@ -17,14 +17,16 @@ end
 -- ============================================================
 --  1. СЕРВИСЫ, СОСТОЯНИЕ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 -- ============================================================
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Lighting         = game:GetService("Lighting")
-local TeleportService  = game:GetService("TeleportService")
-local HttpService      = game:GetService("HttpService")
-local Stats            = game:GetService("Stats")
-local GuiService       = game:GetService("GuiService")
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local Lighting          = game:GetService("Lighting")
+local TeleportService   = game:GetService("TeleportService")
+local HttpService       = game:GetService("HttpService")
+local Stats             = game:GetService("Stats")
+local GuiService        = game:GetService("GuiService")
+local TextChatService   = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LP = Players.LocalPlayer
 if not LP then return end
@@ -35,7 +37,7 @@ pcall(function()
     if ok and type(v) == "function" then DrawingLib = Drawing end
 end)
 
--- Основные настройки скрипта (по умолчанию выбрана металлическая тема "silver")
+-- Основные настройки скрипта (включая параметры спама в чат)
 local state = {
     speed = 16, jump = 50, lockStats = false, infJump = false,
     fly = false, flySpeed = 60, flyVertical = true, clickTp = false,
@@ -46,6 +48,7 @@ local state = {
     spin = false, spinSpeed = 8, theme = "silver",
     visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
     radar = true, radarRange = 160, radarSize = 116,
+    chatSpam = false, chatSpamWord = "GG", chatSpamDelay = 1.5,
 }
 
 local destroyed = false
@@ -199,7 +202,7 @@ local function spinStep(dt)
 end
 
 -- ============================================================
---  3. ОСВЕЩЕНИЕ, FPS BOOST И ТЕЛЕПОРТАЦИЯ / СЕРВЕРА
+--  3. ОСВЕЩЕНИЕ, FPS BOOST, ТЕЛЕПОРТАЦИЯ / СЕРВЕРА И СПАМ В ЧАТ
 -- ============================================================
 local savedLighting = nil
 local function setFullbright(on)
@@ -368,6 +371,35 @@ local function serverHop()
     local ok2 = pcall(function() TeleportService:TeleportToPlaceInstance(placeId, target, LP) end)
     if ok2 then return true end
     return false, "teleport failed"
+end
+
+-- Отправка фиксированного слова в чат (поддержка нового TextChatService и старого чата)
+local function sendChatMessage(msg)
+    msg = tostring(msg or "")
+    if msg == "" then return false end
+
+    local sent = false
+    pcall(function()
+        if TextChatService and TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local channels = TextChatService:FindFirstChild("TextChannels")
+            local general = channels and (channels:FindFirstChild("RBXGeneral") or channels:GetChildren()[1])
+            if general and general.SendAsync then
+                general:SendAsync(msg)
+                sent = true
+            end
+        end
+    end)
+    if sent then return true end
+
+    pcall(function()
+        local events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        local say = events and events:FindFirstChild("SayMessageRequest")
+        if say and say.FireServer then
+            say:FireServer(msg, "All")
+            sent = true
+        end
+    end)
+    return sent
 end
 
 -- ============================================================
@@ -701,7 +733,7 @@ local function radarStep()
 end
 
 -- ============================================================
---  6. ИНТЕРФЕЙС, ПЕРЕЛИВАЮЩАЯСЯ РАМКА И ПОЛНАЯ СМЕНА ТЕМ
+--  6. ИНТЕРФЕЙС, ПЕРЕЛИВАЮЩАЯСЯ РАМКА, ТЕМЫ И ПОЛЕ ВВОДА СПАМ-СЛОВА
 -- ============================================================
 local Theme = {
     bg = Color3.fromRGB(16, 18, 22),
@@ -717,21 +749,18 @@ local Theme = {
 }
 
 local THEMES = {
-    -- Основная тема: металлический блестящий Silver
     silver = {
         bg = Color3.fromRGB(16, 18, 22), card = Color3.fromRGB(27, 30, 36), cardHi = Color3.fromRGB(39, 43, 52),
         line = Color3.fromRGB(76, 84, 98), text = Color3.fromRGB(244, 247, 252), dim = Color3.fromRGB(162, 171, 186),
         accent = Color3.fromRGB(185, 196, 212), accent2 = Color3.fromRGB(238, 244, 255),
         neonA = Color3.fromRGB(150, 164, 184), neonB = Color3.fromRGB(245, 250, 255),
     },
-    -- Новая тема: розовый Pink
     pink = {
         bg = Color3.fromRGB(24, 12, 20), card = Color3.fromRGB(40, 19, 34), cardHi = Color3.fromRGB(56, 27, 47),
         line = Color3.fromRGB(108, 48, 88), text = Color3.fromRGB(255, 238, 249), dim = Color3.fromRGB(206, 148, 186),
         accent = Color3.fromRGB(244, 92, 176), accent2 = Color3.fromRGB(255, 176, 222),
         neonA = Color3.fromRGB(248, 82, 170), neonB = Color3.fromRGB(255, 185, 228),
     },
-    -- Новая тема: золотой Gold
     gold = {
         bg = Color3.fromRGB(23, 18, 10), card = Color3.fromRGB(39, 30, 15), cardHi = Color3.fromRGB(54, 42, 21),
         line = Color3.fromRGB(106, 82, 36), text = Color3.fromRGB(255, 248, 228), dim = Color3.fromRGB(204, 180, 124),
@@ -1315,6 +1344,49 @@ local function makeDropdown(parent, text, options, get, set)
     end)
 end
 
+-- Поле ввода фиксированного слова для спама в чат
+local function makeTextInput(parent, labelText, placeholderText, get, set)
+    local row = card(parent, 54)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -16, 0, 14); lbl.Position = UDim2.fromOffset(8, 5)
+    lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 11
+    lbl.TextColor3 = Theme.dim; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = labelText; lbl.Parent = row
+    registerThemeSync(function() if lbl.Parent then lbl.TextColor3 = Theme.dim end end)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -16, 0, 24); box.Position = UDim2.fromOffset(8, 23)
+    box.BackgroundColor3 = Theme.cardHi; box.BorderSizePixel = 0
+    box.Font = Enum.Font.GothamBold; box.TextSize = 11
+    box.TextColor3 = Theme.accent2; box.PlaceholderColor3 = Theme.dim
+    box.PlaceholderText = placeholderText or "Введите слово..."
+    box.Text = tostring(get() or ""); box.ClearTextOnFocus = false
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.Parent = row; corner(box, 6)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 7); pad.PaddingRight = UDim.new(0, 7)
+    pad.Parent = box
+
+    registerThemeSync(function()
+        if box.Parent then
+            box.BackgroundColor3 = Theme.cardHi
+            box.TextColor3 = Theme.accent2
+            box.PlaceholderColor3 = Theme.dim
+        end
+    end)
+
+    box.FocusLost:Connect(function()
+        set(box.Text)
+    end)
+
+    table.insert(uiRefreshers, function()
+        if not box:IsFocused() then
+            box.Text = tostring(get() or "")
+        end
+    end)
+    return box
+end
+
 local fovCircle = nil
 local statsFrame, statsLabel = nil, nil
 
@@ -1563,7 +1635,7 @@ end, true); saveBtn.LayoutOrder = 3
 
 local refreshWayBtn = makeButton(wayTab, "Refresh list", refreshWaypointList, false); refreshWayBtn.LayoutOrder = 4
 
--- ВКЛАДКА SRV
+-- ВКЛАДКА SRV (ИНФОРМАЦИЯ О СЕРВЕРЕ + СПАМ В ЧАТ)
 local srvTab = newTab("srv")
 local srvStatus = Instance.new("TextLabel")
 srvStatus.Size = UDim2.new(1, 0, 0, 14); srvStatus.BackgroundTransparency = 1; srvStatus.Font = Enum.Font.GothamMedium; srvStatus.TextSize = 10; srvStatus.TextColor3 = Theme.dim; srvStatus.TextXAlignment = Enum.TextXAlignment.Left; srvStatus.Text = ""; srvStatus.LayoutOrder = 1; srvStatus.Parent = srvTab
@@ -1635,10 +1707,67 @@ local srvRefreshBtn = makeButton(srvTab, "Refresh info", function()
     refreshServerInfo(); srvStatus.Text = "refreshed"; notify("server info refreshed", "ok")
 end, false); srvRefreshBtn.LayoutOrder = 12
 
+-- Блок спама в чат: фиксированное слово в текстовом поле + тумблер + задержка
+local spamWordBox = makeTextInput(
+    srvTab,
+    "Spam word",
+    "Введи слово для чата...",
+    function() return state.chatSpamWord end,
+    function(txt)
+        state.chatSpamWord = tostring(txt or "")
+        if notify then notify("spam word updated", "info") end
+    end
+)
+spamWordBox.Parent.LayoutOrder = 13
+
+local spamSwitch = makeSwitch(
+    srvTab,
+    "Chat spam",
+    function() return state.chatSpam end,
+    function(v)
+        if v then
+            local currentWord = (spamWordBox and spamWordBox.Text) or state.chatSpamWord
+            state.chatSpamWord = tostring(currentWord or "")
+            if state.chatSpamWord == "" then
+                state.chatSpam = false
+                if notify then notify("введи слово для спама", "warn") end
+                return
+            end
+        end
+        state.chatSpam = v
+        if notify then notify("chat spam " .. (v and "on" or "off"), v and "ok" or "info") end
+    end
+)
+spamSwitch.LayoutOrder = 14
+
+local spamDelaySlider = makeSlider(
+    srvTab,
+    "Spam delay (sec)",
+    0.5, 10, 0.5,
+    function() return state.chatSpamDelay end,
+    function(v) state.chatSpamDelay = v end,
+    1
+)
+spamDelaySlider.LayoutOrder = 15
+
 task.spawn(function()
     while not destroyed do
         if activeTab == "srv" and refreshServerInfo then pcall(refreshServerInfo) end
         task.wait(1)
+    end
+end)
+
+task.spawn(function()
+    while not destroyed do
+        if state.chatSpam then
+            local word = (spamWordBox and spamWordBox:IsFocused() and spamWordBox.Text) or state.chatSpamWord
+            word = tostring(word or "")
+            if word ~= "" then
+                pcall(sendChatMessage, word)
+            end
+        end
+        local delaySec = clamp(tonumber(state.chatSpamDelay) or 1.5, 0.5, 10)
+        task.wait(delaySec)
     end
 end)
 
@@ -1681,7 +1810,6 @@ local function frameStep(dt)
     if destroyed then return end
     statFrames = statFrames + 1
 
-    -- Переливание неоновой рамки меню и кнопки
     neonAngle = (neonAngle + dt * 95) % 360
     mainNeonGrad.Rotation = neonAngle
     mainGlowGrad.Rotation = (neonAngle + 180) % 360
@@ -1775,6 +1903,7 @@ end
 
 destroy = function()
     if destroyed then return end; destroyed = true
+    state.chatSpam = false
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
     for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn, jumpConn, charConn, camConn, bhopConn }) do
         if conn then pcall(function() conn:Disconnect() end) end
@@ -1795,7 +1924,7 @@ if getgenv then
         destroy = destroy, state = state, notify = notify, applyTheme = applyTheme,
         themes = THEMES, teleport = safeTeleport, rejoin = rejoin, serverHop = serverHop,
         waypoints = waypoints, saveWaypoint = saveWaypoint, refreshServerInfo = refreshServerInfo,
-        saveConfig = saveConfig, loadConfig = loadConfig
+        saveConfig = saveConfig, loadConfig = loadConfig, sendChatMessage = sendChatMessage
     }
 end
 
