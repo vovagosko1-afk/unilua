@@ -1,7 +1,8 @@
 --[[
-    Aero v2.7.6 - 2.7 Base + 2.7.1 Features
-    - Added: Improved FPS Booster, Speed Presets, ESP Tool Info.
-    - Kept: Configs, Server Hop, Iridescent frames.
+    Aero v3.0 - Delta / Mobile build
+    - Fixed: fly pad grid, touch drag, mobile layout clamp
+    - Added: Radar, Skeleton ESP, Chat Spam, Radar range
+    - Kept: Aimbot, ESP, Waypoints, Configs, Server hop, Themes
 ]]
 
 if getgenv and getgenv().__Aero and getgenv().__Aero.destroy then
@@ -17,7 +18,6 @@ local HttpService      = game:GetService("HttpService")
 local Stats            = game:GetService("Stats")
 local GuiService       = game:GetService("GuiService")
 local TweenService     = game:GetService("TweenService")
-local SoundService     = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 if not LP then return end
@@ -37,6 +37,8 @@ local state = {
     stats = false, fpsBoost = false, bhop = false,
     spin = false, spinSpeed = 8, theme = "violet",
     visibleCheck = false, targetMode = "closest", hitbox = "head", aimPing = 0.6,
+    radar = false, skeleton = false, radarRange = 200,
+    chatSpam = false, chatText = "gg", chatDelay = 2,
 }
 
 local destroyed = false
@@ -163,7 +165,7 @@ local function setFullbright(on)
 end
 
 -- ============================================================
---  fps booster (Improved from 2.7.1)
+--  fps booster
 -- ============================================================
 local boostState = nil
 local function setFpsBoost(on)
@@ -179,11 +181,9 @@ local function setFpsBoost(on)
         if ql then pcall(function() settings().Rendering.QualityLevel = 1 end) end
         pcall(function() settings().Rendering.MeshPartDetail = 1 end)
         pcall(function() settings().Rendering.TextureQuality = 1 end)
-        
         Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0
         Lighting.EnvironmentDiffuseScale = 0; Lighting.EnvironmentSpecularScale = 0
         Lighting.FogEnd = 1e6
-        
         local ok, list = pcall(function() return workspace:GetDescendants() end)
         if ok then
             for _, inst in ipairs(list) do
@@ -305,7 +305,7 @@ local function serverHop()
 end
 
 -- ============================================================
---  aimbot (improved)
+--  aimbot
 -- ============================================================
 local function hitboxPart(char)
     if state.hitbox == "root" then return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
@@ -434,16 +434,18 @@ local function espStep()
     local seen = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LP then
-            local c, head, hum = plr.Character, plr.Character and plr.Character:FindFirstChild("Head"), plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+            local c = plr.Character
+            local head = c and c:FindFirstChild("Head")
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
             if c and head and hum then
                 seen[plr] = true
                 local color = espColor(plr, hum)
                 local hl = espHighlights[plr]
-                if not hl or not hl.Parent then
+                if DrawingLib and (not hl or not hl.Parent) then
                     hl = Instance.new("Highlight"); hl.Name = "AeroHL"; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                     hl.FillTransparency = 0.65; hl.OutlineTransparency = 0; hl.Parent = c; espHighlights[plr] = hl
                 end
-                hl.Adornee = c; hl.FillColor = color; hl.OutlineColor = color; hl.Enabled = true
+                if hl then hl.Adornee = c; hl.FillColor = color; hl.OutlineColor = color; hl.Enabled = true end
                 if DrawingLib then
                     local item = espItems[plr]
                     if not item then item = newItem(); espItems[plr] = item end
@@ -453,16 +455,12 @@ local function espStep()
                         local h = math.abs(bottom.Y - top.Y); if h < 6 then h = 6 end; local w = h * 0.55
                         item.box.Color = color; item.box.Size = Vector2.new(w, h); item.box.Position = Vector2.new(top.X - w * 0.5, top.Y); item.box.Visible = true
                         item.name.Color = color; item.name.Text = plr.Name; item.name.Position = Vector2.new(top.X, top.Y - 16); item.name.Visible = true
-                        
-                        -- ESP Tool Info (from 2.7.1)
                         local dist = math.floor((cam.CFrame.Position - head.Position).Magnitude)
                         local tool = c:FindFirstChildOfClass("Tool")
                         local toolName = tool and tool.Name or "Unarmed"
                         if #toolName > 15 then toolName = string.sub(toolName, 1, 13) .. ".." end
-                        
                         item.info.Color = Color3.fromRGB(230, 230, 240); item.info.Text = string.format("%d m | %d hp | %s", dist, math.floor(hum.Health), toolName)
                         item.info.Position = Vector2.new(top.X, top.Y + h + 2); item.info.Visible = true
-                        
                         if state.espHealth then
                             local frac = clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                             local barX = top.X - w * 0.5 - 7
@@ -477,6 +475,180 @@ local function espStep()
     end
     for plr, item in pairs(espItems) do if not seen[plr] then hideItem(item) end end
     for plr, hl in pairs(espHighlights) do if not seen[plr] and hl and hl.Parent then hl.Enabled = false end end
+end
+
+-- ============================================================
+--  skeleton ESP
+-- ============================================================
+local SKELETON_BONES = {
+    {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"}, {"LeftUpperArm","LeftLowerArm"},
+    {"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"},
+    {"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"},
+    {"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"},
+    {"RightLowerLeg","RightFoot"},
+}
+local R15_ALIAS = { UpperTorso = "Torso", LowerTorso = "Torso" }
+local function resolveBone(char, name)
+    if not char then return nil end
+    local p = char:FindFirstChild(name)
+    if p then return p end
+    local alias = R15_ALIAS[name]
+    if alias then return char:FindFirstChild(alias) end
+    return nil
+end
+local skelLines = {}
+local function skeletonClear()
+    for _, line in pairs(skelLines) do pcall(function() line:Remove() end) end
+    skelLines = {}
+end
+local function skeletonStep()
+    if not DrawingLib then return end
+    local cam = workspace.CurrentCamera; if not cam then return end
+    local seen = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local c = plr.Character
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            if c and hum and hum.Health > 0 then
+                seen[plr.UserId] = true
+                local color = (plr.Team and plr.Team.TeamColor.Color) or Color3.fromRGB(124, 92, 255)
+                for i, pair in ipairs(SKELETON_BONES) do
+                    local a = resolveBone(c, pair[1]); local b = resolveBone(c, pair[2])
+                    if a and b then
+                        local pa, onA = cam:WorldToViewportPoint(a.Position)
+                        local pb, onB = cam:WorldToViewportPoint(b.Position)
+                        local key = plr.UserId .. "_" .. i
+                        local line = skelLines[key]
+                        if onA and onB and pa.Z > 0 and pb.Z > 0 then
+                            if not line then
+                                local ok, l = pcall(function() local x = DrawingLib.new("Line"); x.Thickness = 1; x.Transparency = 0.25; return x end)
+                                if ok then line = l; skelLines[key] = line end
+                            end
+                            if line then
+                                line.From = Vector2.new(pa.X, pa.Y); line.To = Vector2.new(pb.X, pb.Y)
+                                line.Color = color; line.Visible = true
+                            end
+                        elseif line then line.Visible = false end
+                    end
+                end
+            end
+        end
+    end
+    for key, line in pairs(skelLines) do
+        local uid = tonumber(string.match(key, "^(%d+)_"))
+        if uid and not seen[uid] then pcall(function() line:Remove() end); skelLines[key] = nil end
+    end
+end
+
+-- ============================================================
+--  radar
+-- ============================================================
+local radarCircle, radarCenter = nil, nil
+local radarDots = {}
+local function radarInit()
+    if not DrawingLib or radarCircle then return end
+    local ok, c = pcall(function() local x = DrawingLib.new("Circle"); x.Thickness = 1; x.Filled = false; x.Transparency = 0.4; x.Radius = 70; return x end)
+    if not ok then return end
+    radarCircle = c
+    local ok2, cen = pcall(function() local x = DrawingLib.new("Circle"); x.Thickness = 1; x.Filled = true; x.Transparency = 0.2; x.Radius = 3; return x end)
+    if ok2 then radarCenter = cen end
+end
+local function radarStep()
+    if not state.radar then
+        if radarCircle then radarCircle.Visible = false end
+        if radarCenter then radarCenter.Visible = false end
+        for _, d in pairs(radarDots) do d.Visible = false end
+        return
+    end
+    if not radarCircle then radarInit() end
+    if not radarCircle then return end
+    local cam = workspace.CurrentCamera; if not cam then return end
+    local vp = cam.ViewportSize
+    local cx, cy = vp.X - 90, vp.Y - 90
+    radarCircle.Position = Vector2.new(cx, cy); radarCircle.Color = Theme.accent; radarCircle.Visible = true
+    if radarCenter then radarCenter.Position = Vector2.new(cx, cy); radarCenter.Color = Theme.accent; radarCenter.Visible = true end
+    local myRoot = getHRP(); if not myRoot then return end
+    local myPos = myRoot.Position
+    local look = cam.CFrame.LookVector
+    local yaw = math.atan2(look.X, look.Z)
+    local cosY, sinY = math.cos(-yaw), math.sin(-yaw)
+    local seen = {}
+    local maxRange = state.radarRange or 200
+    local scale = 70 / maxRange
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local c = plr.Character
+            local r = c and c:FindFirstChild("HumanoidRootPart")
+            if r then
+                seen[plr] = true
+                local d = r.Position - myPos
+                local rx = d.X * cosY - d.Z * sinY
+                local rz = d.X * sinY + d.Z * cosY
+                local dist = math.sqrt(rx * rx + rz * rz)
+                if dist <= maxRange then
+                    local dot = radarDots[plr]
+                    if not dot then
+                        local ok, dd = pcall(function() local x = DrawingLib.new("Circle"); x.Thickness = 1; x.Filled = true; x.Radius = 4; return x end)
+                        if ok then dot = dd; radarDots[plr] = dot end
+                    end
+                    if dot then
+                        dot.Position = Vector2.new(cx + rx * scale, cy + rz * scale)
+                        local hum = c:FindFirstChildOfClass("Humanoid")
+                        dot.Color = (hum and hum.Health > 0) and ((plr.Team and plr.Team.TeamColor.Color) or Color3.fromRGB(124, 92, 255)) or Color3.fromRGB(120, 120, 130)
+                        dot.Visible = true
+                    end
+                elseif radarDots[plr] then radarDots[plr].Visible = false end
+            end
+        end
+    end
+    for plr, dot in pairs(radarDots) do if not seen[plr] then dot.Visible = false end end
+end
+local function radarClear()
+    if radarCircle then pcall(function() radarCircle:Remove() end); radarCircle = nil end
+    if radarCenter then pcall(function() radarCenter:Remove() end); radarCenter = nil end
+    for _, d in pairs(radarDots) do pcall(function() d:Remove() end) end
+    radarDots = {}
+end
+
+-- ============================================================
+--  chat spam
+-- ============================================================
+local chatSpamThread = nil
+local function sayMessage(text)
+    local ts = game:GetService("TextChatService")
+    if ts and ts.ChatVersion == Enum.ChatVersion.TextChatService then
+        local ch = ts:FindFirstChild("TextChannels")
+        local rb = ch and ch:FindFirstChild("RBXGeneral")
+        if rb then pcall(function() rb:SendAsync(text) end); return true end
+        return false
+    end
+    local ev = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+    if ev then
+        local say = ev:FindFirstChild("SayMessageRequest")
+        if say then pcall(function() say:FireServer(text, "All") end); return true end
+    end
+    local c = getChar()
+    local chatBar = c and c:FindFirstChild("ChatBar")
+    return false
+end
+local function setChatSpam(on)
+    state.chatSpam = on
+    if on and not chatSpamThread then
+        chatSpamThread = task.spawn(function()
+            while state.chatSpam and not destroyed do
+                local txt = state.chatText ~= "" and state.chatText or "gg"
+                sayMessage(txt)
+                local d = state.chatDelay or 2
+                local waits = 0
+                while waits < d and state.chatSpam and not destroyed do task.wait(0.25); waits = waits + 0.25 end
+            end
+        end)
+    elseif not on then chatSpamThread = nil
+    end
 end
 
 -- ============================================================
@@ -498,14 +670,13 @@ local THEMES = {
 local function corner(parent, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = parent; return c end
 local function resolveGuiParent() local ok, hui = pcall(function() return gethui and gethui() end); if ok and hui then return hui end; return LP:WaitForChild("PlayerGui") end
 
-local destroy
-local notify
-
+local destroy, notify
 local gui = Instance.new("ScreenGui")
 gui.Name = "Aero"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; gui.DisplayOrder = 1000
-gui.Parent = resolveGuiParent(); if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+local parent = resolveGuiParent()
+gui.Parent = parent
+if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
 
--- toasts
 local toastHolder = Instance.new("Frame")
 toastHolder.Size = UDim2.new(0, 260, 0, 400); toastHolder.AnchorPoint = Vector2.new(1, 0); toastHolder.Position = UDim2.new(1, -12, 0, 12)
 toastHolder.BackgroundTransparency = 1; toastHolder.ZIndex = 50; toastHolder.Parent = gui
@@ -540,7 +711,6 @@ notify = function(text, kind, duration)
     end)
 end
 
--- panel
 local PANEL_W, PANEL_H, TAB_BAR_H = 300, 440, 46
 local main = Instance.new("Frame"); main.Name = "AeroMain"; main.Size = UDim2.fromOffset(PANEL_W, PANEL_H); main.Position = UDim2.fromOffset(16, 80); main.BackgroundColor3 = Theme.bg; main.BorderSizePixel = 0; main.Active = true; main.ClipsDescendants = true; main.ZIndex = 10; main.Parent = gui; corner(main, 16)
 
@@ -549,7 +719,6 @@ local mainGradient = Instance.new("UIGradient"); mainGradient.Parent = mainStrok
 local mainGlow = Instance.new("UIStroke"); mainGlow.Color = Theme.neonB; mainGlow.Thickness = 6; mainGlow.Transparency = 0.85; mainGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; mainGlow.Parent = main
 local mainGlowGradient = Instance.new("UIGradient"); mainGlowGradient.Parent = mainGlow
 
--- reopen (small toggle)
 local reopen = Instance.new("TextButton"); reopen.Name = "AeroToggle"; reopen.Size = UDim2.fromOffset(44, 44); reopen.Position = UDim2.fromOffset(16, 16); reopen.BackgroundColor3 = Theme.bg; reopen.BackgroundTransparency = 0.1; reopen.BorderSizePixel = 0; reopen.Font = Enum.Font.GothamBold; reopen.TextSize = 11; reopen.TextColor3 = Theme.accent2; reopen.Text = "aero"; reopen.AutoButtonColor = false; reopen.ZIndex = 10; reopen.Parent = gui; corner(reopen, 22)
 local reopenStroke = Instance.new("UIStroke"); reopenStroke.Color = Theme.neonA; reopenStroke.Thickness = 2; reopenStroke.Transparency = 0.05; reopenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; reopenStroke.Parent = reopen
 local reopenGradient = Instance.new("UIGradient"); reopenGradient.Parent = reopenStroke
@@ -557,7 +726,6 @@ local reopenGlow = Instance.new("UIStroke"); reopenGlow.Color = Theme.neonB; reo
 local reopenGlowGradient = Instance.new("UIGradient"); reopenGlowGradient.Parent = reopenGlow
 local reopenUserMoved = false
 
--- iridescent setup
 local iridescentOffset = 0
 local function updateIridescentGradient(gradient, baseColor)
     local lighter = Color3.new(math.min(baseColor.R * 1.5, 1), math.min(baseColor.G * 1.5, 1), math.min(baseColor.B * 1.5, 1))
@@ -570,8 +738,12 @@ local function updateIridescentGradient(gradient, baseColor)
 end
 
 local function layoutPanel()
-    local vp = gui.AbsoluteSize; if vp.X < 10 or vp.Y < 10 then local cam = workspace.CurrentCamera; if cam then vp = cam.ViewportSize end end; if vp.X < 10 then vp = Vector2.new(400, 700) end
-    local w = clamp(math.floor(vp.X * 0.52), 258, 340); local h = clamp(math.floor(vp.Y * 0.62), 320, 480)
+    local vp = gui.AbsoluteSize
+    if vp.X < 10 or vp.Y < 10 then local cam = workspace.CurrentCamera; if cam then vp = cam.ViewportSize end end
+    if vp.X < 10 then vp = Vector2.new(400, 700) end
+    local w = clamp(math.floor(vp.X * 0.52), 258, 340)
+    local h = clamp(math.floor(vp.Y * 0.62), 320, 480)
+    if vp.X < 400 then w = clamp(vp.X - 32, 220, 300) end
     PANEL_W = w; PANEL_H = h; main.Size = UDim2.fromOffset(w, h)
     if not reopenUserMoved then reopen.Position = UDim2.fromOffset(16, 16) end
     local padW = 44; reopen.Size = UDim2.fromOffset(padW, padW)
@@ -581,11 +753,10 @@ end
 
 task.spawn(function() for _ = 1, 30 do if destroyed then return end; if gui.AbsoluteSize.X > 10 and gui.AbsoluteSize.Y > 10 then break end; task.wait(0.1) end; pcall(layoutPanel) end)
 
--- header
 local header = Instance.new("Frame"); header.Size = UDim2.new(1, 0, 0, 40); header.BackgroundTransparency = 1; header.Parent = main
 local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(8, 8); dot.Position = UDim2.new(0, 14, 0, 16); dot.BackgroundColor3 = Theme.accent; dot.BorderSizePixel = 0; dot.Parent = header; corner(dot, 4)
 local brand = Instance.new("TextLabel"); brand.Size = UDim2.new(1, -130, 1, 0); brand.Position = UDim2.fromOffset(28, 0); brand.BackgroundTransparency = 1; brand.Font = Enum.Font.GothamBold; brand.TextSize = 15; brand.TextColor3 = Theme.text; brand.TextXAlignment = Enum.TextXAlignment.Left; brand.Text = "AERO"; brand.Parent = header
-local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v2.7.6"; brandTag.Parent = header
+local brandTag = Instance.new("TextLabel"); brandTag.Size = UDim2.new(1, -130, 1, 0); brandTag.Position = UDim2.fromOffset(78, 0); brandTag.BackgroundTransparency = 1; brandTag.Font = Enum.Font.GothamMedium; brandTag.TextSize = 10; brandTag.TextColor3 = Theme.dim; brandTag.TextXAlignment = Enum.TextXAlignment.Left; brandTag.Text = "v3.0"; brandTag.Parent = header
 
 local function headerButton(text, x, onClick)
     local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 26); b.Position = UDim2.new(1, x, 0, 7); b.BackgroundColor3 = Theme.card; b.BorderSizePixel = 0; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.TextColor3 = Theme.text; b.Text = text; b.Parent = header; corner(b, 8)
@@ -632,38 +803,52 @@ for i, def in ipairs(tabDefs) do
     b.MouseButton1Click:Connect(function() showTab(def[1]) end); tabButtons[def[1]] = b
 end
 
--- drag
 local dragging, dragStart, dragOrigin, btnDragging, btnStart, btnOrigin, btnMoved = false, nil, nil, false, nil, nil, 0
 local function isPrimaryInput(input) return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch end
 
 header.InputBegan:Connect(function(input)
     if destroyed or not isPrimaryInput(input) then return end
-    dragging = true; local ap = main.AbsolutePosition; local gp = gui.AbsolutePosition; main.AnchorPoint = Vector2.zero; main.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y); dragStart = input.Position; dragOrigin = main.Position
+    dragging = true
+    local ap = main.AbsolutePosition
+    local gp = gui.AbsolutePosition
+    local ip = input.Position
+    main.AnchorPoint = Vector2.zero
+    main.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
+    dragStart = Vector2.new(ip.X, ip.Y)
+    dragOrigin = main.Position
     input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
 end)
 reopen.InputBegan:Connect(function(input)
     if destroyed or not isPrimaryInput(input) then return end
-    btnDragging = true; btnMoved = 0; btnStart = input.Position; local ap = reopen.AbsolutePosition; local gp = gui.AbsolutePosition; reopen.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y); btnOrigin = reopen.Position
+    btnDragging = true; btnMoved = 0
+    local ip = input.Position
+    btnStart = Vector2.new(ip.X, ip.Y)
+    local ap = reopen.AbsolutePosition
+    local gp = gui.AbsolutePosition
+    reopen.Position = UDim2.fromOffset(ap.X - gp.X, ap.Y - gp.Y)
+    btnOrigin = reopen.Position
     input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then btnDragging = false end end)
 end)
 reopen.InputEnded:Connect(function(input)
     if destroyed or not isPrimaryInput(input) then return end
     btnDragging = false; if btnMoved >= 8 then reopenUserMoved = true else main.Visible = not main.Visible end
 end)
+
 local dragConn = UserInputService.InputChanged:Connect(function(input)
     if destroyed or (input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch) then return end
+    local ip = input.Position
     local sw, sh = gui.AbsoluteSize.X, gui.AbsoluteSize.Y
     if btnDragging and btnStart then
-        local d = input.Position - btnStart; btnMoved = math.max(btnMoved, math.abs(d.X) + math.abs(d.Y))
+        local d = Vector2.new(ip.X, ip.Y) - btnStart
+        btnMoved = math.max(btnMoved, math.abs(d.X) + math.abs(d.Y))
         reopen.Position = UDim2.new(0, clamp(btnOrigin.X.Offset + d.X, 0, sw - reopen.AbsoluteSize.X), 0, clamp(btnOrigin.Y.Offset + d.Y, 0, sh - reopen.AbsoluteSize.Y))
         return
     end
     if not dragging then return end
-    local delta = input.Position - dragStart
+    local delta = Vector2.new(ip.X, ip.Y) - dragStart
     main.Position = UDim2.new(0, clamp(dragOrigin.X.Offset + delta.X, -(PANEL_W - 80), sw - 80), 0, clamp(dragOrigin.Y.Offset + delta.Y, -(PANEL_H - 90), sh - 90))
 end)
 
--- widgets
 local uiRefreshers, uiOrder = {}, 0
 local function nextOrder() uiOrder = uiOrder + 1; return uiOrder end
 local function syncUI() for _, f in ipairs(uiRefreshers) do pcall(f) end end
@@ -733,15 +918,12 @@ local function applyTheme(name)
         updateIridescentGradient(reopenGlowGradient, Theme.neonB)
         if fovCircle then fovCircle.Color = Theme.accent end
     end)
-    pcall(refreshTabStyles); pcall(syncUI); if notify then notify("theme: " .. name, "ok") end
+    pcall(refreshTabStyles); pcall(syncUI)
 end
 
--- config system
+-- config
 local function saveConfig()
-    local cfg = {
-        state = state,
-        waypoints = {}
-    }
+    local cfg = { state = state, waypoints = {} }
     for k, v in pairs(waypoints) do cfg.waypoints[k] = {x=v.X, y=v.Y, z=v.Z} end
     local ok, encoded = pcall(function() return HttpService:JSONEncode(cfg) end)
     if ok then
@@ -755,14 +937,12 @@ local function loadConfig()
     if not rOk or not content then notify("config not found", "warn") return end
     local dOk, cfg = pcall(function() return HttpService:JSONDecode(content) end)
     if dOk and type(cfg) == "table" then
-        if cfg.state then
-            for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end
-        end
+        if cfg.state then for k, v in pairs(cfg.state) do if state[k] ~= nil then state[k] = v end end end
         if cfg.waypoints then
             for k in pairs(waypoints) do waypoints[k] = nil end
             for k, v in pairs(cfg.waypoints) do waypoints[k] = Vector3.new(v.x, v.y, v.z) end
         end
-        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList(); refreshThemeButtons()
+        applyStats(); applyTheme(state.theme); syncUI(); refreshWaypointList()
         notify("config loaded", "ok")
     else notify("decode failed", "err") end
 end
@@ -772,7 +952,6 @@ local moveTab = newTab("move")
 makeSlider(moveTab, "WalkSpeed", 8, 400, 4, function() return state.speed end, function(v) state.speed = v; applySpeed() end, 0)
 makeSlider(moveTab, "JumpPower", 0, 500, 10, function() return state.jump end, function(v) state.jump = v; applyJump() end, 0)
 
--- Speed Presets (from 2.7.1)
 local presetCard = Instance.new("Frame")
 presetCard.Size = UDim2.new(1, 0, 0, 36); presetCard.BackgroundColor3 = Theme.card; presetCard.BorderSizePixel = 0; presetCard.LayoutOrder = nextOrder(); presetCard.Parent = moveTab; corner(presetCard, 10)
 local presetRow = Instance.new("Frame")
@@ -790,6 +969,9 @@ makeSwitch(moveTab, "Infinite jump", function() return state.infJump end, functi
 makeSwitch(moveTab, "BHop", function() return state.bhop end, function(v) setBhop(v); notify("bhop " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSwitch(moveTab, "Fly", function() return state.fly end, function(v) setFly(v); notify("fly " .. (v and "on" or "off"), v and "ok" or "info") end)
 
+-- FIXED FLY PAD: + / ^ / -
+--                < / x / >
+--                (empty) / v / (empty)
 local pad = Instance.new("Frame"); pad.Size = UDim2.new(1, 0, 0, 88); pad.BackgroundTransparency = 1; pad.LayoutOrder = nextOrder(); pad.Parent = moveTab
 local grid = Instance.new("UIGridLayout"); grid.CellSize = UDim2.new(0.32, 0, 0, 28); grid.CellPadding = UDim2.new(0.02, 0, 0, 2); grid.SortOrder = Enum.SortOrder.LayoutOrder; grid.Parent = pad
 makeHold(pad, "+", function() flyInput.u = 1 end, function() flyInput.u = 0 end, 1)
@@ -798,9 +980,9 @@ makeHold(pad, "-", function() flyInput.d = 1 end, function() flyInput.d = 0 end,
 makeHold(pad, "<", function() flyInput.l = 1 end, function() flyInput.l = 0 end, 4)
 makeHold(pad, "x", function() clearFlyInput() end, function() end, 5)
 makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 6)
-makeHold(pad, ">", function() flyInput.r = 1 end, function() flyInput.r = 0 end, 7)
+local padSpacer1 = Instance.new("Frame"); padSpacer1.BackgroundTransparency = 1; padSpacer1.LayoutOrder = 7; padSpacer1.Parent = pad
 makeHold(pad, "v", function() flyInput.b = 1 end, function() flyInput.b = 0 end, 8)
-makeHold(pad, "x", function() clearFlyInput() end, function() end, 9)
+local padSpacer2 = Instance.new("Frame"); padSpacer2.BackgroundTransparency = 1; padSpacer2.LayoutOrder = 9; padSpacer2.Parent = pad
 makeSlider(moveTab, "Fly speed", 10, 400, 5, function() return state.flySpeed end, function(v) state.flySpeed = v end, 0)
 makeSwitch(moveTab, "Click TP", function() return state.clickTp end, function(v) state.clickTp = v; notify("click tp " .. (v and "on" or "off"), v and "ok" or "info") end)
 
@@ -822,12 +1004,30 @@ makeDropdown(aimTab, "Hitbox", {"head", "root", "torso"}, function() return stat
 local visTab = newTab("vis")
 makeSwitch(visTab, "ESP", function() return state.esp end, function(v) state.esp = v; if not v then clearESP() end; notify("esp " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSwitch(visTab, "ESP health bars", function() return state.espHealth end, function(v) state.espHealth = v end)
+makeSwitch(visTab, "Skeleton ESP", function() return state.skeleton end, function(v) state.skeleton = v; if not v then skeletonClear() end; notify("skeleton " .. (v and "on" or "off"), v and "ok" or "info") end)
+makeSwitch(visTab, "Radar", function() return state.radar end, function(v) state.radar = v; if not v then radarClear() else radarInit() end; notify("radar " .. (v and "on" or "off"), v and "ok" or "info") end)
+makeSlider(visTab, "Radar range", 50, 500, 25, function() return state.radarRange end, function(v) state.radarRange = v end, 0)
 makeSwitch(visTab, "Fullbright", function() return state.fullbright end, function(v) setFullbright(v) end)
 makeSwitch(visTab, "Stats overlay", function() return state.stats end, function(v) state.stats = v end)
 makeSwitch(visTab, "FPS booster", function() return state.fpsBoost end, function(v) setFpsBoost(v); notify("fps boost " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSwitch(visTab, "Spinbot", function() return state.spin end, function(v) state.spin = v; if not v then local root = getHRP(); if root then root.CFrame = CFrame.new(root.Position, root.Position + Vector3.new(0, 0, -1)) end end; notify("spinbot " .. (v and "on" or "off"), v and "ok" or "info") end)
 makeSlider(visTab, "Spin speed", 1, 30, 1, function() return state.spinSpeed end, function(v) state.spinSpeed = v end, 0)
 
+-- chat spam section
+local chatSection = Instance.new("Frame"); chatSection.Size = UDim2.new(1, 0, 0, 26); chatSection.BackgroundTransparency = 1; chatSection.LayoutOrder = nextOrder(); chatSection.Parent = visTab
+local chatLbl = Instance.new("TextLabel"); chatLbl.Size = UDim2.new(1, 0, 1, 0); chatLbl.BackgroundTransparency = 1; chatLbl.Font = Enum.Font.GothamBold; chatLbl.TextSize = 12; chatLbl.TextColor3 = Theme.accent2; chatLbl.TextXAlignment = Enum.TextXAlignment.Left; chatLbl.Text = "  CHAT SPAM"; chatLbl.Parent = chatSection
+
+makeSwitch(visTab, "Chat spam", function() return state.chatSpam end, function(v) setChatSpam(v); notify("chat spam " .. (v and "on" or "off"), v and "ok" or "info") end)
+
+local chatTextBoxCard = Instance.new("Frame"); chatTextBoxCard.Size = UDim2.new(1, 0, 0, 42); chatTextBoxCard.BackgroundColor3 = Theme.card; chatTextBoxCard.BorderSizePixel = 0; chatTextBoxCard.LayoutOrder = nextOrder(); chatTextBoxCard.Parent = visTab; corner(chatTextBoxCard, 10)
+local chatBoxLbl = Instance.new("TextLabel"); chatBoxLbl.Size = UDim2.new(0, 70, 1, 0); chatBoxLbl.Position = UDim2.fromOffset(12, 0); chatBoxLbl.BackgroundTransparency = 1; chatBoxLbl.Font = Enum.Font.GothamMedium; chatBoxLbl.TextSize = 12; chatBoxLbl.TextColor3 = Theme.dim; chatBoxLbl.TextXAlignment = Enum.TextXAlignment.Left; chatBoxLbl.Text = "text"; chatBoxLbl.Parent = chatTextBoxCard
+local chatBoxInput = Instance.new("TextBox"); chatBoxInput.Size = UDim2.new(1, -90, 0, 26); chatBoxInput.Position = UDim2.new(0, 78, 0.5, -13); chatBoxInput.BackgroundColor3 = Theme.cardHi; chatBoxInput.BorderSizePixel = 0; chatBoxInput.Font = Enum.Font.GothamMedium; chatBoxInput.TextSize = 12; chatBoxInput.TextColor3 = Theme.text; chatBoxInput.Text = state.chatText; chatBoxInput.PlaceholderText = "gg"; chatBoxInput.PlaceholderColor3 = Theme.dim; chatBoxInput.TextXAlignment = Enum.TextXAlignment.Left; chatBoxInput.ClearTextOnFocus = false; chatBoxInput.Parent = chatTextBoxCard; corner(chatBoxInput, 7)
+local chatInputPad = Instance.new("UIPadding"); chatInputPad.PaddingLeft = UDim.new(0, 8); chatInputPad.PaddingRight = UDim.new(0, 8); chatInputPad.Parent = chatBoxInput
+chatBoxInput.FocusLost:Connect(function() state.chatText = chatBoxInput.Text ~= "" and chatBoxInput.Text or "gg" end)
+
+makeSlider(visTab, "Chat delay", 0.5, 15, 0.5, function() return state.chatDelay end, function(v) state.chatDelay = v end, 1)
+
+-- theme
 local themeCard = Instance.new("Frame"); themeCard.Size = UDim2.new(1, 0, 0, 52); themeCard.BackgroundColor3 = Theme.card; themeCard.BorderSizePixel = 0; themeCard.LayoutOrder = nextOrder(); themeCard.Parent = visTab; corner(themeCard, 10)
 local themeLbl = Instance.new("TextLabel"); themeLbl.Size = UDim2.new(1, -20, 0, 16); themeLbl.Position = UDim2.fromOffset(12, 6); themeLbl.BackgroundTransparency = 1; themeLbl.Font = Enum.Font.GothamMedium; themeLbl.TextSize = 12; themeLbl.TextColor3 = Theme.dim; themeLbl.TextXAlignment = Enum.TextXAlignment.Left; themeLbl.Text = "Theme"; themeLbl.Parent = themeCard
 local themeRow = Instance.new("Frame"); themeRow.Size = UDim2.new(1, -20, 0, 22); themeRow.Position = UDim2.fromOffset(10, 24); themeRow.BackgroundTransparency = 1; themeRow.Parent = themeCard
@@ -957,7 +1157,13 @@ local function frameStep(dt)
     mainGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
     reopenGlowGradient.Offset = Vector2.new(iridescentOffset, 0)
 
-    if state.aimbot then aimStep(dt) end; if state.triggerbot then triggerStep() end; if state.fly then flyStep() end; if state.spin then spinStep(dt) end; if state.esp or next(espItems) or next(espHighlights) then espStep() end
+    if state.aimbot then aimStep(dt) end
+    if state.triggerbot then triggerStep() end
+    if state.fly then flyStep() end
+    if state.spin then spinStep(dt) end
+    if state.esp then espStep() end
+    if state.skeleton then skeletonStep() end
+    if state.radar then radarStep() end
     if fovCircle then local cam = workspace.CurrentCamera; if state.aimbot and cam then fovCircle.Position = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5); fovCircle.Radius = state.fov; fovCircle.Visible = true else fovCircle.Visible = false end end
 end
 local bound = pcall(function() RunService:UnbindFromRenderStep("AeroFrame"); RunService:BindToRenderStep("AeroFrame", Enum.RenderPriority.Camera.Value + 1, frameStep) end); if not bound then RunService.RenderStepped:Connect(frameStep) end
@@ -975,8 +1181,8 @@ local clickTpConn = UserInputService.InputBegan:Connect(function(input, processe
     local hit = workspace:Raycast(ray.Origin, ray.Direction * 3000, params); if hit then teleportToPosition(hit.Position + Vector3.new(0, 3, 0)) end
 end)
 
-local jumpConn = UserInputService.JumpRequest:Connect(function() if destroyed or not state.infJump then return end; local h = getHum(); if h and h.Health > 0 then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
-local charConn = LP.CharacterAdded:Connect(function() task.wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.esp then clearESP() end end)
+local jumpConn = UserInputService.JumpRequest:Connect(function() if destroyed or not state.infJump then return end; local h = getHum(); if h and h.Health > 0 then task.wait(); h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
+local charConn = LP.CharacterAdded:Connect(function() task.wait(0.6); if destroyed then return end; applyStats(); clearFlyInput(); if state.fly then setFly(true) end; if state.esp then clearESP() end; if state.skeleton then skeletonClear() end end)
 
 task.spawn(function() while not destroyed do if state.lockStats then local h = getHum(); if h and h.Health > 0 then if h.WalkSpeed ~= state.speed then h.WalkSpeed = state.speed end; if h.UseJumpPower ~= true then pcall(function() h.UseJumpPower = true end) end; if h.JumpPower ~= state.jump then h.JumpPower = state.jump end end end; task.wait(0.4) end end)
 
@@ -986,7 +1192,8 @@ destroy = function()
     if destroyed then return end; destroyed = true
     pcall(function() RunService:UnbindFromRenderStep("AeroFrame") end)
     for _, conn in ipairs({ dragConn, sliderConn, sliderEndConn, clickTpConn, jumpConn, charConn, camConn, bhopConn }) do if conn then pcall(function() conn:Disconnect() end) end end
-    pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(clearESP); pcall(setFullbright, false); pcall(setFpsBoost, false)
+    pcall(function() if state.fly then setFly(false) end end); pcall(function() if state.bhop then setBhop(false) end end); pcall(function() if state.chatSpam then setChatSpam(false) end end)
+    pcall(clearESP); pcall(skeletonClear); pcall(radarClear); pcall(setFullbright, false); pcall(setFpsBoost, false)
     if fovCircle then pcall(function() fovCircle:Remove() end) end; pcall(function() gui:Destroy() end)
     state.esp = false; state.spin = false
     if getgenv then getgenv().__Aero = nil end
